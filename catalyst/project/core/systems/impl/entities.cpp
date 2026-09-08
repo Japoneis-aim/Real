@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include "../../memory/safe_read.hpp"
 
 namespace systems {
 
@@ -55,17 +56,15 @@ namespace systems {
 			return 0;
 		}
 
-		const auto list_entry = g::memory.read<std::uintptr_t>( entity_list + ( static_cast< std::uintptr_t >( ( handle & 0x7fff ) >> 9 ) * 8 ) + 0x10 );
-		if ( !list_entry )
-		{
-			return 0;
-		}
+	const auto list_entry_addr = entity_list + ( static_cast< std::uintptr_t >( ( handle & 0x7fff ) >> 9 ) * 8 ) + 0x10;
+	const auto list_entry = g::memory.read<std::uintptr_t>( list_entry_addr );
+	if ( !list_entry )
+		return 0;
 
-		const auto entity = g::memory.read<std::uintptr_t>( list_entry + ( static_cast< std::uintptr_t >( handle & 0x1ff ) * 112 ) );
-		if ( !entity || entity < 0x10000 )
-		{
-			return 0;
-		}
+	const auto entity_addr = list_entry + ( static_cast< std::uintptr_t >( handle & 0x1ff ) * 112 );
+	const auto entity = g::memory.read<std::uintptr_t>( entity_addr );
+	if ( !entity || entity < 0x10000 )
+		return 0;
 
 		return entity;
 	}
@@ -114,37 +113,32 @@ namespace systems {
 
 	std::uint32_t entities::get_schema_hash( std::uintptr_t entity ) const
 	{
-		const auto entity_identity = g::memory.read<std::uintptr_t>( entity + 0x10 );
-		if ( !entity_identity )
-		{
-			return 0;
-		}
+	const auto entity_identity = g::memory.read<std::uintptr_t>( entity + 0x10 );
+	if ( !entity_identity )
+		return 0;
 
-		const auto class_info = g::memory.read<std::uintptr_t>( entity_identity + 0x8 );
-		if ( !class_info )
-		{
-			return 0;
-		}
+	const auto class_info = g::memory.read<std::uintptr_t>( entity_identity + 0x8 );
+	if ( !class_info )
+		return 0;
 
-		const auto name_container = g::memory.read<std::uintptr_t>( class_info + 0x8 );
-		if ( !name_container )
-		{
-			return 0;
-		}
+	const auto name_container = g::memory.read<std::uintptr_t>( class_info + 0x8 );
+	if ( !name_container )
+		return 0;
 
-		const auto schema_name = g::memory.read<std::uintptr_t>( name_container + 0x8 );
-		if ( !schema_name )
-		{
-			return 0;
-		}
+	const auto schema_name = g::memory.read<std::uintptr_t>( name_container + 0x8 );
+	if ( !schema_name )
+		return 0;
 
-		char class_name[ 64 ]{};
-		g::memory.read( schema_name, class_name, sizeof( class_name ) );
+	char class_name[ 64 ]{};
+	if ( !g::memory.read( schema_name, class_name, sizeof( class_name ) ) )
+	{
+		return 0;
+	}
 
-		if ( !class_name[ 0 ] )
-		{
-			return 0;
-		}
+	if ( !class_name[ 0 ] )
+	{
+		return 0;
+	}
 
 		return fnv1a::runtime_hash( class_name );
 	}

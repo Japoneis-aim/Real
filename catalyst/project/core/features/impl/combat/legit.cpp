@@ -489,7 +489,30 @@ namespace features::combat {
 	// ============================================================================
 
 	void legit::draw_penetration_crosshair( zdraw::draw_list&, const math::vector3&, const math::vector3& ) { }
-	void legit::draw_fov( zdraw::draw_list&, const math::vector3&, const math::vector3&, const settings::combat::aimbot& ) { }
+	void legit::draw_fov( zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles, const settings::combat::aimbot& cfg )
+	{
+		// Verifica flag e alpha (m_fov_alpha já controla visibilidade)
+		if ( !cfg.draw_fov )
+			return;
+
+		const auto col = cfg.fov_color.value;
+		if ( col.a < 8 )
+			return;
+
+		// Converter configuração de FOV (presumida em graus) para pixels.
+		// Base simplificada: 90 graus -> screen_width pixels
+		const auto display = zdraw::get_display_size();
+		const float screen_w = static_cast<float>( display.first );
+		const float fov_deg = static_cast<float>( cfg.fov );
+		const float fov_px = fov_deg * ( screen_w / 90.0f );
+
+		// Centro da tela
+		const float cx = screen_w * 0.5f;
+		const float cy = static_cast<float>( display.second ) * 0.5f;
+
+		// Desenha círculo FOV
+		draw_list.add_circle( cx, cy, fov_px, col, 64, 1.5f );
+	}
 	void legit::zeusbot( const math::vector3&, const math::vector3&, const std::vector<systems::collector::player>& ) { }
 
 	legit::trigger_result legit::trace_crosshair( const math::vector3&, const math::vector3&, const std::vector<systems::collector::player>&, const settings::combat::triggerbot& ) const

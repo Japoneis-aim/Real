@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include "../../memory/safe_read.hpp"
 
 namespace systems {
 
@@ -10,30 +11,34 @@ namespace systems {
 			return 0;
 		}
 
-		const auto field_count = g::memory.read<std::int16_t>( class_info + 0x24 );
-		const auto fields_ptr = g::memory.read<std::uintptr_t>( class_info + 0x30 );
+		const auto field_count_opt = memutil::safe_read_opt<std::int16_t>( class_info + 0x24 );
+		const auto fields_ptr_opt = memutil::safe_read_opt<std::uintptr_t>( class_info + 0x30 );
 
-		if ( field_count <= 0 || !fields_ptr )
-		{
+		if ( !field_count_opt || !fields_ptr_opt )
 			return 0;
-		}
+
+		const auto field_count = *field_count_opt;
+		const auto fields_ptr = *fields_ptr_opt;
 
 		for ( std::int16_t i = 0; i < field_count; ++i )
 		{
 			const auto field_addr = fields_ptr + static_cast< std::size_t >( i ) * 0x20;
-			const auto name_ptr = g::memory.read<std::uintptr_t>( field_addr );
+			auto name_ptr_opt = memutil::safe_read_opt<std::uintptr_t>( field_addr );
 
-			if ( !name_ptr )
-			{
+			if ( !name_ptr_opt )
 				continue;
-			}
 
+			const auto name_ptr = *name_ptr_opt;
 			char name[ 256 ]{};
-			g::memory.read( name_ptr, name, sizeof( name ) );
+			if ( !g::memory.read( name_ptr, name, sizeof( name ) ) )
+				continue;
 
 			if ( fnv1a::runtime_hash( name ) == field_hash )
 			{
-				return g::memory.read< int >( field_addr + 0x10 );
+				auto off_opt = memutil::safe_read_opt<int>( field_addr + 0x10 );
+				if ( off_opt )
+					return *off_opt;
+				return 0;
 			}
 		}
 
@@ -46,28 +51,30 @@ namespace systems {
 		{
 			const auto schema_system = g::memory.find_vtable_instance( g::modules.schemasystem, "CSchemaSystem" );
 			if ( !schema_system )
-			{
 				return 0;
-			}
 
-			const auto scope_count = g::memory.read<int>( schema_system + 0x190 );
-			const auto scope_data = g::memory.read<std::uintptr_t>( schema_system + 0x198 );
+			auto scope_count_opt = memutil::safe_read_opt<int>( schema_system + 0x190 );
+			auto scope_data_opt  = memutil::safe_read_opt<std::uintptr_t>( schema_system + 0x198 );
 
-			if ( !scope_count || scope_count > 64 || !scope_data )
-			{
+			if ( !scope_count_opt || !scope_data_opt )
 				return 0;
-			}
+
+			const auto scope_count = *scope_count_opt;
+			const auto scope_data  = *scope_data_opt;
+
+			if ( scope_count <= 0 || scope_count > 64 || !scope_data )
+				return 0;
 
 			for ( auto i = 0; i < scope_count; ++i )
 			{
-				const auto scope_ptr = g::memory.read<std::uintptr_t>( scope_data + i * sizeof( std::uintptr_t ) );
-				if ( !scope_ptr )
-				{
+				auto scope_ptr_opt = memutil::safe_read_opt<std::uintptr_t>( scope_data + i * sizeof( std::uintptr_t ) );
+				if ( !scope_ptr_opt )
 					continue;
-				}
 
+				const auto scope_ptr = *scope_ptr_opt;
 				char scope_name[ 32 ]{};
-				g::memory.read( scope_ptr + 0x8, scope_name, sizeof( scope_name ) );
+				if ( !g::memory.read( scope_ptr + 0x8, scope_name, sizeof( scope_name ) ) )
+					continue;
 
 				if ( std::strcmp( scope_name, "client.dll" ) == 0 )
 				{
@@ -77,49 +84,58 @@ namespace systems {
 			}
 
 			if ( !this->m_client_scope )
-			{
 				return 0;
-			}
 		}
 
 		const auto name_hash = this->murmur2( class_name );
 		const auto idx = this->bucket_index( name_hash );
 
 		const auto bucket_addr = this->m_client_scope + 0x5c0 + static_cast< std::size_t >( idx ) * 24;
-		const auto first = g::memory.read<std::uintptr_t>( bucket_addr );
-		auto element = first;
+
+		auto first_opt = memutil::safe_read_opt<std::uintptr_t>( bucket_addr );
+		if ( !first_opt )
+			return 0;
+
+		auto element = *first_opt;
 
 		while ( element )
 		{
-			const auto key = g::memory.read<std::uint32_t>( element );
-			if ( key == name_hash )
+			auto key_opt = memutil::safe_read_opt<std::uint32_t>( element );
+			if ( key_opt && *key_opt == name_hash )
 			{
-				const auto data = g::memory.read<std::uintptr_t>( element + 16 );
-				if ( data )
-				{
-					return data;
-				}
+				auto data_opt = memutil::safe_read_opt<std::uintptr_t>( element + 16 );
+				if ( data_opt && *data_opt )
+					return *data_opt;
 			}
 
-			element = g::memory.read<std::uintptr_t>( element + 8 );
+			auto next_opt = memutil::safe_read_opt<std::uintptr_t>( element + 8 );
+			if ( !next_opt )
+				break;
+
+			element = *next_opt;
 		}
 
-		const auto first_uncommitted = g::memory.read<std::uintptr_t>( bucket_addr + 16 );
-		element = first_uncommitted;
+		auto first_uncommitted_opt = memutil::safe_read_opt<std::uintptr_t>( bucket_addr + 16 );
+		if ( !first_uncommitted_opt )
+			return 0;
 
-		while ( element && element != first )
+		element = *first_uncommitted_opt;
+
+		while ( element && element != *first_opt )
 		{
-			const auto key = g::memory.read<std::uint32_t>( element );
-			if ( key == name_hash )
+			auto key_opt = memutil::safe_read_opt<std::uint32_t>( element );
+			if ( key_opt && *key_opt == name_hash )
 			{
-				const auto data = g::memory.read<std::uintptr_t>( element + 16 );
-				if ( data )
-				{
-					return data;
-				}
+				auto data_opt = memutil::safe_read_opt<std::uintptr_t>( element + 16 );
+				if ( data_opt && *data_opt )
+					return *data_opt;
 			}
 
-			element = g::memory.read<std::uintptr_t>( element + 8 );
+			auto next_opt = memutil::safe_read_opt<std::uintptr_t>( element + 8 );
+			if ( !next_opt )
+				break;
+
+			element = *next_opt;
 		}
 
 		return 0;

@@ -195,6 +195,8 @@ namespace systems {
 	class collector
 	{
 	public:
+		using hitbox = hitboxes::entry;
+
 		enum class item_subtype : std::uint8_t
 		{
 			unknown = 0,

@@ -53,15 +53,20 @@ namespace systems {
 
         if ( remap_to_read > 0 )
         {
-            g::memory.read( remap_table, remap_buf.data( ), static_cast< std::size_t >( remap_to_read ) * sizeof( std::int16_t ) );
+            if ( !g::memory.read( remap_table, remap_buf.data( ), static_cast< std::size_t >( remap_to_read ) * sizeof( std::int16_t ) ) )
+            {
+                return result;
+            }
         }
 
         std::uint16_t ofs_a{}, ofs_b{};
 
         if ( has_remap )
         {
-            ofs_a = g::memory.read<std::uint16_t>( mesh_a );
-            ofs_b = g::memory.read<std::uint16_t>( mesh_b );
+            const auto a = g::memory.read<std::uint16_t>( mesh_a );
+            if ( a ) ofs_a = a;
+            const auto b = g::memory.read<std::uint16_t>( mesh_b );
+            if ( b ) ofs_b = b;
         }
 
         constexpr auto k_hitbox_stride{ 0x70 };

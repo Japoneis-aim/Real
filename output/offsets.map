@@ -1,0 +1,25 @@
+dwGlobalVars 0x20AF5F0
+global_vars 0x20AF5F0
+dwEntityList 0x2571220
+entity_list 0x2571220
+dwLocalPlayerController 0x23A0F30
+local_player_controller 0x23A0F30
+dwViewMatrix 0x23CB830
+view_matrix 0x23CB830
+
+# additional client offsets
+m_pszImpactEffect 0x11E0
+m_impactEnergyScale 0x1258
+
+# animationsystem
+m_bulletImpact 0x20
+
+# common names (aliases)
+m_iHealth 0x334
+m_iTeamNum 0x3C3
+m_vOldOrigin 0x12B4
+m_vecAbsVelocity 0x12C0
+m_vecViewOffset 0x12CC
+m_bPinPulled 0x1680
+m_fThrowTime 0x1690
+m_flThrowStrength 0x16A0

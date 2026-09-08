@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include "../../memory/safe_read.hpp"
 
 namespace systems {
 

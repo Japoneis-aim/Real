@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include "../../memory/safe_read.hpp"
 
 namespace systems {
 
@@ -31,7 +32,10 @@ namespace systems {
 			}
 
 			std::vector<std::uint8_t> bvh_buf( static_cast< std::size_t >( node_count ) * 32 );
-			g::memory.read( bvh_ptr, bvh_buf.data( ), bvh_buf.size( ) );
+			if ( !g::memory.read( bvh_ptr, bvh_buf.data( ), bvh_buf.size( ) ) )
+			{
+				return false;
+			}
 
 			std::uint32_t min_tri = UINT32_MAX, max_tri = 0;
 			std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
@@ -90,7 +94,10 @@ namespace systems {
 			}
 
 			std::vector<int> indices( total_tris * 3 );
-			g::memory.read( tri_ptr + static_cast< std::uintptr_t >( min_tri ) * 12, indices.data( ), total_tris * 12 );
+			if ( !g::memory.read( tri_ptr + static_cast< std::uintptr_t >( min_tri ) * 12, indices.data( ), total_tris * 12 ) )
+			{
+				return false;
+			}
 
 			auto max_vert{ 0 };
 
@@ -107,7 +114,10 @@ namespace systems {
 			const auto vert_count = static_cast< std::uint32_t >( max_vert + 1 );
 
 			std::vector<float> vertices( vert_count * 3 );
-			g::memory.read( vert_ptr, vertices.data( ), static_cast< std::size_t >( vert_count ) * 12 );
+			if ( !g::memory.read( vert_ptr, vertices.data( ), static_cast< std::size_t >( vert_count ) * 12 ) )
+			{
+				return false;
+			}
 
 			std::vector<std::uint8_t> materials{};
 
@@ -115,7 +125,10 @@ namespace systems {
 			if ( has_materials )
 			{
 				materials.resize( total_tris );
-				g::memory.read( mat_arr_ptr + static_cast< std::uintptr_t >( min_tri ), materials.data( ), total_tris );
+				if ( !g::memory.read( mat_arr_ptr + static_cast< std::uintptr_t >( min_tri ), materials.data( ), total_tris ) )
+				{
+					return false;
+				}
 			}
 
 			const auto global_count = static_cast< int >( global_table.size( ) );
@@ -180,8 +193,11 @@ namespace systems {
 				return false;
 			}
 
-			std::uint8_t hd[ 0x100 ]{};
-			g::memory.read( hull_data, hd, sizeof( hd ) );
+		std::uint8_t hd[ 0x100 ]{};
+		if ( !g::memory.read( hull_data, hd, sizeof( hd ) ) )
+		{
+			return false;
+		}
 
 			const auto vert_count = *reinterpret_cast< const int* >( hd + 0x88 );
 			const auto vert_ptr = *reinterpret_cast< const std::uintptr_t* >( hd + 0x90 );
@@ -196,13 +212,24 @@ namespace systems {
 				return false;
 			}
 
-			std::vector<float> verts( vert_count * 3 );
-			std::vector<hedge> hedges( hedge_count );
-			std::vector<std::uint8_t> faces( face_count );
+	std::vector<float> verts( vert_count * 3 );
+	std::vector<hedge> hedges( hedge_count );
+	std::vector<std::uint8_t> faces( face_count );
 
-			g::memory.read( vert_ptr, verts.data( ), static_cast< std::size_t >( vert_count ) * 12 );
-			g::memory.read( hedge_ptr, hedges.data( ), static_cast< std::size_t >( hedge_count ) * 4 );
-			g::memory.read( face_ptr, faces.data( ), face_count );
+	if ( !g::memory.read( vert_ptr, verts.data( ), static_cast< std::size_t >( vert_count ) * 12 ) )
+	{
+		return false;
+	}
+
+	if ( !g::memory.read( hedge_ptr, hedges.data( ), static_cast< std::size_t >( hedge_count ) * 4 ) )
+	{
+		return false;
+	}
+
+	if ( !g::memory.read( face_ptr, faces.data( ), face_count ) )
+	{
+		return false;
+	}
 
 			auto vert = [ & ]( int vi ) -> math::vector3
 				{
@@ -296,8 +323,11 @@ namespace systems {
 				return;
 			}
 
-			std::uint8_t md[ 0xA0 ]{};
-			g::memory.read( mesh_data, md, sizeof( md ) );
+	std::uint8_t md[ 0xA0 ]{};
+	if ( !g::memory.read( mesh_data, md, sizeof( md ) ) )
+	{
+		return;
+	}
 
 			const auto node_count = *reinterpret_cast< const int* >( md + 0x18 );
 			if ( node_count <= 0 || *reinterpret_cast< const int* >( md + 0x30 ) <= 0 || *reinterpret_cast< const int* >( md + 0x48 ) <= 0 )
@@ -305,8 +335,11 @@ namespace systems {
 				return;
 			}
 
-			float scale[ 3 ]{};
-			g::memory.read( shape_body + 0xB0, scale, sizeof( scale ) );
+		float scale[ 3 ]{};
+	if ( !g::memory.read( shape_body + 0xB0, scale, sizeof( scale ) ) )
+	{
+		return;
+	}
 
 			for ( auto& s : scale )
 			{
@@ -321,11 +354,17 @@ namespace systems {
 				}
 			}
 
-			float world_pos[ 3 ]{};
-			g::memory.read( shape_body + 0x100, world_pos, sizeof( world_pos ) );
+		float world_pos[ 3 ]{};
+	if ( !g::memory.read( shape_body + 0x100, world_pos, sizeof( world_pos ) ) )
+	{
+		return;
+	}
 
-			math::quaternion quat{};
-			g::memory.read( shape_body + 0x130, &quat, sizeof( quat ) );
+		math::quaternion quat{};
+	if ( !g::memory.read( shape_body + 0x130, &quat, sizeof( quat ) ) )
+	{
+		return;
+	}
 
 			const auto ql = quat.x * quat.x + quat.y * quat.y + quat.z * quat.z + quat.w * quat.w;
 			if ( ql < 0.5f || ql > 1.5f )
@@ -365,10 +404,13 @@ namespace systems {
 			{
 				auto empty_run{ 0 };
 
-				for ( auto i = 0; i < 1024; ++i )
+		for ( auto i = 0; i < 1024; ++i )
 				{
 					bvh::global_surface_entry sd{};
-					g::memory.read( array_base + static_cast< std::size_t >( i ) * 32, &sd, sizeof( sd ) );
+			if ( !g::memory.read( array_base + static_cast< std::size_t >( i ) * 32, &sd, sizeof( sd ) ) )
+			{
+				continue;
+			}
 
 					const bool empty = sd.penetration_mod == 0.0f && sd.surface_type == 0 && sd.unk_00 == 0.0f;
 					if ( empty )
@@ -386,11 +428,14 @@ namespace systems {
 				}
 			}
 
-			if ( count > 0 )
+		if ( count > 0 )
+		{
+			table.resize( count );
+			if ( !g::memory.read( array_base, table.data( ), static_cast< std::size_t >( count ) * sizeof( bvh::global_surface_entry ) ) )
 			{
-				table.resize( count );
-				g::memory.read( array_base, table.data( ), static_cast< std::size_t >( count ) * sizeof( bvh::global_surface_entry ) );
+				return table;
 			}
+		}
 
 			return table;
 		}
@@ -477,8 +522,11 @@ namespace systems {
 				continue;
 			}
 
-			std::vector<std::uint8_t> outer_buf( outer_node_count * 48 );
-			g::memory.read( bvh_nodes_ptr, outer_buf.data( ), outer_buf.size( ) );
+		std::vector<std::uint8_t> outer_buf( outer_node_count * 48 );
+	if ( !g::memory.read( bvh_nodes_ptr, outer_buf.data( ), outer_buf.size( ) ) )
+	{
+		return;
+	}
 
 			std::unordered_set<std::uintptr_t> seen{};
 			std::vector<int> stack{};
@@ -533,6 +581,56 @@ namespace systems {
 		this->m_centroids.clear( );
 	}
 
+// Helper: Moller-Trumbore triangle intersection (extracted to remove duplication)
+namespace
+{
+	static inline bool intersect_triangle_mt( const float dir[3], const float origin[3], const math::vector3& v0, const math::vector3& v1, const math::vector3& v2, float& out_t, float u_eps = 0.0f, float v_eps = 0.0f, float sum_eps = 0.0f )
+	{
+		const auto e1x = v1.x - v0.x, e1y = v1.y - v0.y, e1z = v1.z - v0.z;
+		const auto e2x = v2.x - v0.x, e2y = v2.y - v0.y, e2z = v2.z - v0.z;
+
+		const auto hx = dir[1] * e2z - dir[2] * e2y;
+		const auto hy = dir[2] * e2x - dir[0] * e2z;
+		const auto hz = dir[0] * e2y - dir[1] * e2x;
+		const auto a = e1x * hx + e1y * hy + e1z * hz;
+
+		if ( a > -1e-8f && a < 1e-8f )
+		{
+			return false;
+		}
+
+		const auto f = 1.0f / a;
+		const auto sx = origin[0] - v0.x, sy = origin[1] - v0.y, sz = origin[2] - v0.z;
+
+		const auto u = f * ( sx * hx + sy * hy + sz * hz );
+
+		if ( u < ( 0.0f - u_eps ) || u > ( 1.0f + u_eps ) )
+		{
+			return false;
+		}
+
+		const auto qx = sy * e1z - sz * e1y;
+		const auto qy = sz * e1x - sx * e1z;
+		const auto qz = sx * e1y - sy * e1x;
+		const auto v = f * ( dir[0] * qx + dir[1] * qy + dir[2] * qz );
+
+		if ( v < ( 0.0f - v_eps ) || u + v > ( 1.0f + sum_eps ) )
+		{
+			return false;
+		}
+
+		const auto t = f * ( e2x * qx + e2y * qy + e2z * qz );
+
+		if ( t > 1e-5f )
+		{
+			out_t = t;
+			return true;
+		}
+
+		return false;
+	}
+}
+
 	bvh::trace_result bvh::trace_ray( const math::vector3& start, const math::vector3& end, int exclude_tri ) const
 	{
 		trace_result result{};
@@ -584,39 +682,8 @@ namespace systems {
 
 					const auto& tri = this->m_triangles[ ti ];
 
-					const auto e1x = tri.v1.x - tri.v0.x, e1y = tri.v1.y - tri.v0.y, e1z = tri.v1.z - tri.v0.z;
-					const auto e2x = tri.v2.x - tri.v0.x, e2y = tri.v2.y - tri.v0.y, e2z = tri.v2.z - tri.v0.z;
-
-					const auto hx = dir[ 1 ] * e2z - dir[ 2 ] * e2y;
-					const auto hy = dir[ 2 ] * e2x - dir[ 0 ] * e2z;
-					const auto hz = dir[ 0 ] * e2y - dir[ 1 ] * e2x;
-					const auto a = e1x * hx + e1y * hy + e1z * hz;
-
-					if ( a > -1e-8f && a < 1e-8f )
-					{
-						continue;
-					}
-
-					const auto f = 1.0f / a;
-					const auto sx = origin[ 0 ] - tri.v0.x, sy = origin[ 1 ] - tri.v0.y, sz = origin[ 2 ] - tri.v0.z;
-					const auto u = f * ( sx * hx + sy * hy + sz * hz );
-
-					if ( u < 0.0f || u > 1.0f )
-					{
-						continue;
-					}
-
-					const auto qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
-					const auto v = f * ( dir[ 0 ] * qx + dir[ 1 ] * qy + dir[ 2 ] * qz );
-
-					if ( v < 0.0f || u + v > 1.0f )
-					{
-						continue;
-					}
-
-					const auto t = f * ( e2x * qx + e2y * qy + e2z * qz );
-
-					if ( t > 1e-5f && t < closest_t )
+					float t = 0.0f;
+					if ( intersect_triangle_mt( dir, origin, tri.v0, tri.v1, tri.v2, t ) && t < closest_t )
 					{
 						closest_t = t;
 						result.hit = true;
@@ -626,9 +693,9 @@ namespace systems {
 						result.surface = tri.surface;
 						result.end_pos = { origin[ 0 ] + dir[ 0 ] * t, origin[ 1 ] + dir[ 1 ] * t, origin[ 2 ] + dir[ 2 ] * t };
 
-						const auto nx = e1y * e2z - e1z * e2y;
-						const auto ny = e1z * e2x - e1x * e2z;
-						const auto nz = e1x * e2y - e1y * e2x;
+						const auto nx = ( tri.v1.y - tri.v0.y ) * ( tri.v2.z - tri.v0.z ) - ( tri.v1.z - tri.v0.z ) * ( tri.v2.y - tri.v0.y );
+						const auto ny = ( tri.v1.z - tri.v0.z ) * ( tri.v2.x - tri.v0.x ) - ( tri.v1.x - tri.v0.x ) * ( tri.v2.z - tri.v0.z );
+						const auto nz = ( tri.v1.x - tri.v0.x ) * ( tri.v2.y - tri.v0.y ) - ( tri.v1.y - tri.v0.y ) * ( tri.v2.x - tri.v0.x );
 						const auto nl = std::sqrt( nx * nx + ny * ny + nz * nz );
 
 						if ( nl > 1e-8f )
@@ -758,39 +825,12 @@ namespace systems {
 					const auto sign = center_to_origin_dot >= 0.0f ? 1.0f : -1.0f;
 
 					const auto v0x = tri.v0.x + push_x * sign, v0y = tri.v0.y + push_y * sign, v0z = tri.v0.z + push_z * sign;
-					const auto fe1x = tri.v1.x + push_x * sign - v0x, fe1y = tri.v1.y + push_y * sign - v0y, fe1z = tri.v1.z + push_z * sign - v0z;
-					const auto fe2x = tri.v2.x + push_x * sign - v0x, fe2y = tri.v2.y + push_y * sign - v0y, fe2z = tri.v2.z + push_z * sign - v0z;
+					const math::vector3 ev0{ v0x, v0y, v0z };
+					const math::vector3 ev1{ tri.v1.x + push_x * sign, tri.v1.y + push_y * sign, tri.v1.z + push_z * sign };
+					const math::vector3 ev2{ tri.v2.x + push_x * sign, tri.v2.y + push_y * sign, tri.v2.z + push_z * sign };
 
-					const auto hx = dir[ 1 ] * fe2z - dir[ 2 ] * fe2y;
-					const auto hy = dir[ 2 ] * fe2x - dir[ 0 ] * fe2z;
-					const auto hz = dir[ 0 ] * fe2y - dir[ 1 ] * fe2x;
-					const auto a = fe1x * hx + fe1y * hy + fe1z * hz;
-
-					if ( a > -1e-8f && a < 1e-8f )
-					{
-						continue;
-					}
-
-					const auto f = 1.0f / a;
-					const auto sx = origin[ 0 ] - v0x, sy = origin[ 1 ] - v0y, sz = origin[ 2 ] - v0z;
-					const auto u = f * ( sx * hx + sy * hy + sz * hz );
-
-					if ( u < -0.01f || u > 1.01f )
-					{
-						continue;
-					}
-
-					const auto qx = sy * fe1z - sz * fe1y, qy = sz * fe1x - sx * fe1z, qz = sx * fe1y - sy * fe1x;
-					const auto v = f * ( dir[ 0 ] * qx + dir[ 1 ] * qy + dir[ 2 ] * qz );
-
-					if ( v < -0.01f || u + v > 1.02f )
-					{
-						continue;
-					}
-
-					const auto t = f * ( fe2x * qx + fe2y * qy + fe2z * qz );
-
-					if ( t > 0.0f && t < closest_t )
+					float t = 0.0f;
+					if ( intersect_triangle_mt( dir, origin, ev0, ev1, ev2, t, 0.01f, 0.01f, 0.02f ) && t < closest_t )
 					{
 						closest_t = t;
 						result.hit = true;
@@ -862,43 +902,12 @@ namespace systems {
 					const auto ti = this->m_indices[ i ];
 					const auto& tri = this->m_triangles[ ti ];
 
-					const auto e1x = tri.v1.x - tri.v0.x, e1y = tri.v1.y - tri.v0.y, e1z = tri.v1.z - tri.v0.z;
-					const auto e2x = tri.v2.x - tri.v0.x, e2y = tri.v2.y - tri.v0.y, e2z = tri.v2.z - tri.v0.z;
-
-					const auto hx = dir[ 1 ] * e2z - dir[ 2 ] * e2y;
-					const auto hy = dir[ 2 ] * e2x - dir[ 0 ] * e2z;
-					const auto hz = dir[ 0 ] * e2y - dir[ 1 ] * e2x;
-					const auto a = e1x * hx + e1y * hy + e1z * hz;
-
-					if ( a > -1e-8f && a < 1e-8f )
+					float t = 0.0f;
+					if ( intersect_triangle_mt( dir, origin, tri.v0, tri.v1, tri.v2, t ) && t < max_dist )
 					{
-						continue;
-					}
-
-					const auto f = 1.0f / a;
-					const auto sx = origin[ 0 ] - tri.v0.x, sy = origin[ 1 ] - tri.v0.y, sz = origin[ 2 ] - tri.v0.z;
-					const auto u = f * ( sx * hx + sy * hy + sz * hz );
-
-					if ( u < 0.0f || u > 1.0f )
-					{
-						continue;
-					}
-
-					const auto qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
-					const auto v = f * ( dir[ 0 ] * qx + dir[ 1 ] * qy + dir[ 2 ] * qz );
-
-					if ( v < 0.0f || u + v > 1.0f )
-					{
-						continue;
-					}
-
-					const auto t = f * ( e2x * qx + e2y * qy + e2z * qz );
-
-					if ( t > 1e-5f && t < max_dist )
-					{
-						auto nx = e1y * e2z - e1z * e2y;
-						auto ny = e1z * e2x - e1x * e2z;
-						auto nz = e1x * e2y - e1y * e2x;
+						auto nx = ( tri.v1.y - tri.v0.y ) * ( tri.v2.z - tri.v0.z ) - ( tri.v1.z - tri.v0.z ) * ( tri.v2.y - tri.v0.y );
+						auto ny = ( tri.v1.z - tri.v0.z ) * ( tri.v2.x - tri.v0.x ) - ( tri.v1.x - tri.v0.x ) * ( tri.v2.z - tri.v0.z );
+						auto nz = ( tri.v1.x - tri.v0.x ) * ( tri.v2.y - tri.v0.y ) - ( tri.v1.y - tri.v0.y ) * ( tri.v2.x - tri.v0.x );
 						const auto nl = std::sqrt( nx * nx + ny * ny + nz * nz );
 
 						if ( nl > 1e-8f )

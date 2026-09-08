@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include "../../../memory/safe_read.hpp"
 
 namespace features::misc {
 
@@ -164,7 +165,13 @@ namespace features::misc {
 		}
 
 		char name[ 64 ]{};
-		g::memory.read( name_ptr, name, sizeof( name ) - 1 );
+		if ( !g::memory.read( name_ptr, name, sizeof( name ) - 1 ) )
+		{
+			this->m_weapon_hash = 0;
+			this->m_detonate_time = 1.5f;
+			this->m_velocity_threshold = 0.1f;
+			return;
+		}
 		this->m_weapon_hash = fnv1a::runtime_hash( name );
 
 		switch ( this->m_weapon_hash )

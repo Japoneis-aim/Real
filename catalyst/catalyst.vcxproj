@@ -103,7 +103,10 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="project\core\features\features.hpp" />
+    <ClInclude Include="project\core\memory\safe_read.hpp" />
     <ClInclude Include="project\core\menu\menu.hpp" />
+    <ClInclude Include="project\core\offsets\game_structs.hpp" />
+    <ClInclude Include="project\core\offsets\offsets.hpp" />
     <ClInclude Include="project\external\config.hpp" />
     <ClInclude Include="project\external\lz4\lz4.h" />
     <ClInclude Include="project\external\nanosvg\include.hpp" />

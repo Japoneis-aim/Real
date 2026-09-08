@@ -134,47 +134,47 @@ namespace features::combat {
 		}
 	}
 
-	static bool should_stop_penetrating( const penetration_segment& seg, float pen_mod )
-	{
-		return seg.exit_distance > 3000.0f || pen_mod < 0.1f;
-	}
+static bool should_stop_penetrating( const systems::bvh::penetration_segment& seg, float pen_mod )
+{
+	return seg.exit_distance > 3000.0f || pen_mod < 0.1f;
+}
 
-	static float compute_damage_loss(
-		float current_damage,
-		const weapon_data& data,
-		float pen_mod,
-		float damage_modifier,
-		float thickness )
+static float compute_damage_loss(
+	float current_damage,
+	const shared::penetration::weapon_data& data,
+	float pen_mod,
+	float damage_modifier,
+	float thickness )
 	{
 		const auto inv_pen  = 1.0f / pen_mod;
 		const auto base_loss = damage_modifier * current_damage;
-		const auto pen_loss  = std::max( 0.0f, ( 3.0f / data.penetration ) * 1.25f ) * ( inv_pen * 3.0f );
+	const auto pen_loss  = std::max( 0.0f, ( 3.0f / data.penetration ) * 1.25f ) * ( inv_pen * 3.0f );
 		const auto dist_loss = ( thickness * thickness * inv_pen ) / 24.0f;
 		return current_damage - ( base_loss + pen_loss + dist_loss );
 	}
 
 	// ---- Hitbox / capsule helpers ----
 
-	static math::vector3 get_capsule_axis( const math::vector3& half_extent )
+static math::vector3 get_capsule_axis( const math::vector3& half_extent )
 	{
 		const auto ax = std::abs( half_extent.x );
 		const auto ay = std::abs( half_extent.y );
 		const auto az = std::abs( half_extent.z );
-		const auto longest = std::max( { ax, ay, az } );
+	const auto longest = std::max( std::max( ax, ay ), az );
 
-		if ( ax >= ay && ax >= az )
-			return { longest, 0.0f, 0.0f };
-		if ( ay >= az )
-			return { 0.0f, longest, 0.0f };
-		return { 0.0f, 0.0f, longest };
+	if ( ax >= ay && ax >= az )
+		return { longest, 0.0f, 0.0f };
+	if ( ay >= az )
+		return { 0.0f, longest, 0.0f };
+	return { 0.0f, 0.0f, longest };
 	}
 
-	static bool build_hitbox_capsule(
-		const systems::collector::hitbox& hb,
-		const systems::bones::bone& bone,
-		math::vector3& out_capsule_start,
-		math::vector3& out_capsule_end,
-		float& out_radius )
+static bool build_hitbox_capsule(
+	const systems::collector::hitbox& hb,
+	const systems::bones::data::bone& bone,
+	math::vector3& out_capsule_start,
+	math::vector3& out_capsule_end,
+	float& out_radius )
 	{
 		if ( hb.index < 0 || hb.bone < 0 )
 			return false;
@@ -192,12 +192,12 @@ namespace features::combat {
 		return true;
 	}
 
-	static bool build_hitbox_capsule_v2(
-		const systems::collector::hitbox& hb,
-		const systems::bones::bone& bone,
-		math::vector3& out_capsule_start,
-		math::vector3& out_capsule_end,
-		float& out_radius )
+static bool build_hitbox_capsule_v2(
+	const systems::collector::hitbox& hb,
+	const systems::bones::data::bone& bone,
+	math::vector3& out_capsule_start,
+	math::vector3& out_capsule_end,
+	float& out_radius )
 	{
 		if ( hb.index < 0 || hb.bone < 0 )
 			return false;

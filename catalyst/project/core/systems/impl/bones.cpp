@@ -1,4 +1,5 @@
 #include <stdafx.hpp>
+#include "../../memory/safe_read.hpp"
 
 namespace systems {
 
@@ -39,11 +40,11 @@ namespace systems {
 			math::quaternion rotation;
 		};
 
-		std::array<bone_data, 128> raw{};
-		if ( !g::memory.read( bone_cache, raw.data( ), sizeof( bone_data ) * 128 ) )
-		{
-			return {};
-		}
+std::array<bone_data, 128> raw{};
+if ( !g::memory.read( bone_cache, raw.data( ), sizeof( bone_data ) * 128 ) )
+{
+	return {};
+}
 
 		data result{};
 

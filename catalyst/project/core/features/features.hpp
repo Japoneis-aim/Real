@@ -1,5 +1,13 @@
 #pragma once
 
+#include <vector>
+#include <cstdint>
+#include <shared_mutex>
+#include <chrono>
+#include <unordered_map>
+// core systems types
+#include "../systems/systems.hpp"
+
 namespace features {
 
 	namespace combat {
@@ -7,10 +15,9 @@ namespace features {
 		class legit
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
-			void tick( );
+			void on_render(zdraw::draw_list& draw_list);
+			void tick();
 
-		private:
 			struct target
 			{
 				const systems::collector::player* player{};
@@ -23,17 +30,6 @@ namespace features {
 				bool penetrated{};
 			};
 
-			[[nodiscard]] target select_target( const math::vector3& eye_pos, const math::vector3& view_angles, const std::vector<systems::collector::player>& players, const settings::combat::group_config& cfg ) const;
-			[[nodiscard]] math::vector3 get_aim_point( const math::vector3& eye_pos, const systems::collector::player& player, const systems::bones::data& bones, const settings::combat::group_config& cfg, float& out_damage, int& out_hitbox, bool& out_penetrated ) const;
-
-			[[nodiscard]] float get_fov( const math::vector3& view_angles, const math::vector3& eye_pos, const math::vector3& target_pos ) const;
-			[[nodiscard]] float get_fov_radius( const math::vector3& eye_pos, const math::vector3& view_angles, float fov_degrees ) const;
-
-			void draw_penetration_crosshair( zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles );
-			void draw_fov( zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles, const settings::combat::aimbot& cfg );
-			void aimbot( const math::vector3& eye_pos, const math::vector3& view_angles, const target& tgt, const settings::combat::aimbot& cfg );
-			void zeusbot( const math::vector3& eye_pos, const math::vector3& view_angles, const std::vector<systems::collector::player>& players );
-
 			struct trigger_result
 			{
 				const systems::collector::player* player{};
@@ -44,20 +40,121 @@ namespace features {
 				bool penetrated{};
 			};
 
-			[[nodiscard]] trigger_result trace_crosshair( const math::vector3& eye_pos, const math::vector3& view_angles, const std::vector<systems::collector::player>& players, const settings::combat::triggerbot& cfg ) const;
-			void triggerbot( const math::vector3& eye_pos, const math::vector3& view_angles, const std::vector<systems::collector::player>& players, const settings::combat::triggerbot& cfg );
+		private:
+			// --- Target Selection ---
+			[[nodiscard]] target select_target(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const std::vector<systems::collector::player>& players,
+				const settings::combat::group_config& cfg
+			) const;
 
+			[[nodiscard]] bool is_valid_target(const systems::collector::player& player) const;
+			[[nodiscard]] float calculate_target_score(float fov, const math::vector3& eye_pos, const math::vector3& aim_point) const;
+			[[nodiscard]] target build_target(
+				const systems::collector::player& player,
+				const systems::bones::data& bones,
+				const math::vector3& aim_point,
+				int hitbox,
+				float damage,
+				float fov,
+				bool penetrated
+			) const;
+
+			// --- Aim Point ---
+			[[nodiscard]] math::vector3 get_aim_point(
+				const math::vector3& eye_pos,
+				const systems::collector::player& player,
+				const systems::bones::data& bones,
+				const settings::combat::group_config& cfg,
+				float& out_damage,
+				int& out_hitbox,
+				bool& out_penetrated
+			) const;
+
+			[[nodiscard]] bool is_valid_hitbox(const systems::hitboxes::entry& hb, const settings::combat::group_config& cfg) const;
+
+			[[nodiscard]] bool try_visible_hitbox(
+				const math::vector3& eye_pos,
+				const math::vector3& pos,
+				const systems::collector::player& player,
+				const systems::bones::data& bones,
+				const systems::hitboxes::entry& hb,
+				const settings::combat::group_config& cfg,
+				float current_dmg,
+				float& best_dmg,
+				math::vector3& best_pos,
+				int& out_hitbox,
+				bool& out_penetrated
+			) const;
+
+			// --- FOV ---
+			[[nodiscard]] float get_fov(const math::vector3& view_angles, const math::vector3& eye_pos, const math::vector3& target_pos) const;
+			[[nodiscard]] float get_fov_radius(const math::vector3& eye_pos, const math::vector3& view_angles, float fov_degrees) const;
+
+			// --- Aim ---
+			[[nodiscard]] float calculate_deg_per_pixel() const;
+			void apply_aim(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const math::vector3& aim_point,
+				float deg_per_pixel,
+				const settings::combat::aimbot& cfg
+			);
+			[[nodiscard]] float apply_smoothing(float delta, float delta_length, int smoothing) const;
+
+			// --- Render ---
+			void draw_penetration_crosshair(zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles);
+			void draw_fov(zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles, const settings::combat::aimbot& cfg);
+
+			// --- Aimbot ---
+			void aimbot(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const target& tgt,
+				const settings::combat::aimbot& cfg
+			);
+			void zeusbot(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const std::vector<systems::collector::player>& players
+			);
+
+			// --- Triggerbot ---
+			[[nodiscard]] trigger_result trace_crosshair(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const std::vector<systems::collector::player>& players,
+				const settings::combat::triggerbot& cfg
+			) const;
+
+			void triggerbot(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const std::vector<systems::collector::player>& players,
+				const settings::combat::triggerbot& cfg
+			);
+
+			[[nodiscard]] float calculate_trigger_delay(
+				const math::vector3& eye_pos,
+				const math::vector3& view_angles,
+				const trigger_result& result,
+				const settings::combat::triggerbot& cfg
+			) const;
+
+			void execute_trigger(float now);
+			void ensure_rng_seeded();
+			void update_trigger_state();
+
+			// --- State ---
 			animation::spring m_fov_alpha{};
 			random::valve_rng m_rng{};
 			bool m_rng_seeded{};
-
 			math::vector2 m_aim_error{};
-
 			float m_trigger_delay_end{};
 			bool m_trigger_waiting{};
 			bool m_trigger_held{};
 			float m_trigger_release_time{};
-
 			float m_zeus_fire_time{};
 		};
 
@@ -66,23 +163,23 @@ namespace features {
 		public:
 			struct context
 			{
-				std::uintptr_t weapon;
-				std::uintptr_t weapon_vdata;
-				std::uint32_t weapon_type;
-				std::uint16_t item_def_idx;
-				int num_bullets;
-				float inaccuracy;
-				float base_inaccuracy;
-				float spread;
-				float recoil_index;
-				bool is_reloading;
-				bool is_full_auto;
-				bool is_scoped;
-				bool weapon_ready;
-				float current_time;
-				float cycle_time;
-				float last_shot_time;
-				bool valid;
+				std::uintptr_t weapon{};
+				std::uintptr_t weapon_vdata{};
+				std::uint32_t weapon_type{};
+				std::uint16_t item_def_idx{};
+				int num_bullets{};
+				float inaccuracy{};
+				float base_inaccuracy{};
+				float spread{};
+				float recoil_index{};
+				bool is_reloading{};
+				bool is_full_auto{};
+				bool is_scoped{};
+				bool weapon_ready{};
+				float current_time{};
+				float cycle_time{};
+				float last_shot_time{};
+				bool valid{};
 			};
 
 			class penetration
@@ -90,45 +187,79 @@ namespace features {
 			public:
 				struct weapon_data
 				{
-					float damage;
-					float penetration;
-					float range_modifier;
-					float range;
-					float armor_ratio;
-					float headshot_multiplier;
+					float damage{};
+					float penetration{};
+					float range_modifier{};
+					float range{};
+					float armor_ratio{};
+					float headshot_multiplier{};
 				};
 
 				struct result
 				{
-					float damage;
-					int hitbox;
-					bool penetrated;
+					float damage{};
+					int hitbox{ -1 };
+					bool penetrated{};
 				};
 
-				void prepare( std::uintptr_t weapon_vdata, std::uintptr_t weapon );
-
-				[[nodiscard]] bool run( const math::vector3& start, const math::vector3& end, const systems::collector::player& target, const systems::bones::data& bones, result& out ) const;
-				[[nodiscard]] bool can( const math::vector3& start, const math::vector3& direction, float& out_damage ) const;
-				[[nodiscard]] float get_max_damage( int hitgroup, int target_armor, bool has_helmet, int target_team ) const;
-				[[nodiscard]] const weapon_data& get_weapon_data( ) const { return this->m_weapon_data; }
+				void prepare(std::uintptr_t weapon_vdata, std::uintptr_t weapon);
+				[[nodiscard]] bool run(
+					const math::vector3& start,
+					const math::vector3& end,
+					const systems::collector::player& target,
+					const systems::bones::data& bones,
+					result& out
+				) const;
+				[[nodiscard]] bool can(const math::vector3& start, const math::vector3& direction, float& out_damage) const;
+				[[nodiscard]] float get_max_damage(int hitgroup, int target_armor, bool has_helmet, int target_team) const;
+				[[nodiscard]] const weapon_data& get_weapon_data() const { return this->m_weapon_data; }
 
 			private:
 				weapon_data m_weapon_data{};
 			};
 
-			void tick( );
+			void tick();
+			[[nodiscard]] const context& ctx() const { return this->m_ctx; }
+			[[nodiscard]] const penetration& pen() const { return this->m_pen; }
 
-			[[nodiscard]] const context& ctx( ) const { return this->m_ctx; }
-			[[nodiscard]] const penetration& pen( ) const { return this->m_pen; }
+			[[nodiscard]] float calculate_hitchance(
+				const math::vector3& eye_pos,
+				const math::vector3& aim_angle,
+				const systems::collector::player& target,
+				const systems::bones::data& bones
+			) const;
 
-			[[nodiscard]] float calculate_hitchance( const math::vector3& eye_pos, const math::vector3& aim_angle, const systems::collector::player& target, const systems::bones::data& bones ) const;
-			[[nodiscard]] std::uint32_t get_spread_seed( const math::vector3& angles, int tick ) const;
-			[[nodiscard]] math::vector2 calculate_spread( int seed, float accuracy, float spread, float recoil_index, int item_def_idx, int num_bullets ) const;
-			[[nodiscard]] float get_prediction_time( ) const;
-			[[nodiscard]] float get_spread( std::uintptr_t weapon_vdata ) const;
-			[[nodiscard]] float get_inaccuracy( std::uintptr_t pawn, std::uintptr_t weapon, std::uintptr_t weapon_vdata, const math::vector3& eye_angles ) const;
-			[[nodiscard]] bool ray_hits_capsule( const math::vector3& ray_origin, const math::vector3& ray_dir, const math::vector3& capsule_start, const math::vector3& capsule_end, float radius ) const;
-			[[nodiscard]] bool is_weapon_max_accuracy( ) const;
+			[[nodiscard]] std::uint32_t get_spread_seed(const math::vector3& angles, int tick) const;
+			[[nodiscard]] math::vector2 calculate_spread(
+				int seed,
+				float accuracy,
+				float spread,
+				float recoil_index,
+				int item_def_idx,
+				int num_bullets
+			) const;
+
+			[[nodiscard]] float get_prediction_time() const;
+			[[nodiscard]] float get_spread(std::uintptr_t weapon_vdata) const;
+			[[nodiscard]] float get_inaccuracy(
+				std::uintptr_t pawn,
+				std::uintptr_t weapon,
+				std::uintptr_t weapon_vdata,
+				const math::vector3& eye_angles
+			) const;
+
+			[[nodiscard]] bool ray_hits_capsule(
+				const math::vector3& ray_origin,
+				const math::vector3& ray_dir,
+				const math::vector3& capsule_start,
+				const math::vector3& capsule_end,
+				float radius
+			) const;
+
+			[[nodiscard]] bool is_weapon_max_accuracy() const;
+
+		private:
+			void store_context(const context& ctx);
 
 			context m_ctx{};
 			penetration m_pen{};
@@ -145,7 +276,7 @@ namespace features {
 		class player
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
+			void on_render(zdraw::draw_list& draw_list);
 
 		private:
 			struct draw_offsets
@@ -156,14 +287,14 @@ namespace features {
 				float right{};
 			};
 
-			void add_box( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const settings::esp::player::box& cfg, bool is_visible );
-			void add_skeleton( zdraw::draw_list& draw_list, const systems::bones::data& bones, const settings::esp::player::skeleton& cfg, bool is_visible );
-			void add_hitboxes( zdraw::draw_list& draw_list, const systems::bones::data& bones, const systems::collector::player& player, const settings::esp::player::hitboxes& cfg, float current_time );
-			void add_health_bar( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::health_bar& cfg, draw_offsets& offsets );
-			void add_ammo_bar( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::ammo_bar& cfg, draw_offsets& offsets );
-			void add_name( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::name& cfg, draw_offsets& offsets );
-			void add_weapon( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::weapon& cfg, draw_offsets& offsets );
-			void add_flags( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::info_flags& cfg, draw_offsets& offsets );
+			void add_box(zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const settings::esp::player::box& cfg, bool is_visible);
+			void add_skeleton(zdraw::draw_list& draw_list, const systems::bones::data& bones, const settings::esp::player::skeleton& cfg, bool is_visible);
+			void add_hitboxes(zdraw::draw_list& draw_list, const systems::bones::data& bones, const systems::collector::player& player, const settings::esp::player::hitboxes& cfg, float current_time);
+			void add_health_bar(zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::health_bar& cfg, draw_offsets& offsets);
+			void add_ammo_bar(zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::ammo_bar& cfg, draw_offsets& offsets);
+			void add_name(zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::name& cfg, draw_offsets& offsets);
+			void add_weapon(zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::weapon& cfg, draw_offsets& offsets);
+			void add_flags(zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::info_flags& cfg, draw_offsets& offsets);
 
 			struct animation_data
 			{
@@ -180,34 +311,34 @@ namespace features {
 		class item
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
+			void on_render(zdraw::draw_list& draw_list);
 
 		private:
 			enum class category : std::uint8_t { rifle, smg, shotgun, sniper, pistol, heavy, grenade, utility };
 
-			void add_icon( zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::icon& cfg, float& y_offset );
-			void add_name( zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::name& cfg, float& y_offset );
-			void add_ammo( zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::ammo& cfg, float& y_offset );
+			void add_icon(zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::icon& cfg, float& y_offset);
+			void add_name(zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::name& cfg, float& y_offset);
+			void add_ammo(zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::ammo& cfg, float& y_offset);
 
-			[[nodiscard]] bool passes_filter( systems::collector::item_subtype subtype, const settings::esp::item::filters& filters ) const;
-			[[nodiscard]] category get_category( systems::collector::item_subtype subtype ) const;
-			[[nodiscard]] std::string get_icon( systems::collector::item_subtype subtype ) const;
-			[[nodiscard]] std::string get_display_name( systems::collector::item_subtype subtype ) const;
+			[[nodiscard]] bool passes_filter(systems::collector::item_subtype subtype, const settings::esp::item::filters& filters) const;
+			[[nodiscard]] category get_category(systems::collector::item_subtype subtype) const;
+			[[nodiscard]] std::string get_icon(systems::collector::item_subtype subtype) const;
+			[[nodiscard]] std::string get_display_name(systems::collector::item_subtype subtype) const;
 		};
 
 		class projectile
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
+			void on_render(zdraw::draw_list& draw_list);
 
 		private:
-			void draw_timer( zdraw::draw_list& draw_list, const math::vector2& screen, float& y_offset, float remaining, float frac, const settings::esp::projectile& cfg ) const;
-			void draw_inferno_bounds( zdraw::draw_list& draw_list, const systems::collector::projectile& proj, const settings::esp::projectile& cfg ) const;
+			void draw_timer(zdraw::draw_list& draw_list, const math::vector2& screen, float& y_offset, float remaining, float frac, const settings::esp::projectile& cfg) const;
+			void draw_inferno_bounds(zdraw::draw_list& draw_list, const systems::collector::projectile& proj, const settings::esp::projectile& cfg) const;
 
-			[[nodiscard]] zdraw::rgba get_color( systems::collector::projectile_subtype type, const settings::esp::projectile& cfg ) const;
-			[[nodiscard]] std::string get_icon( systems::collector::projectile_subtype type ) const;
-			[[nodiscard]] std::string get_name( systems::collector::projectile_subtype type ) const;
-			[[nodiscard]] zdraw::rgba lerp_color( const zdraw::rgba& a, const zdraw::rgba& b, float t ) const;
+			[[nodiscard]] zdraw::rgba get_color(systems::collector::projectile_subtype type, const settings::esp::projectile& cfg) const;
+			[[nodiscard]] std::string get_icon(systems::collector::projectile_subtype type) const;
+			[[nodiscard]] std::string get_name(systems::collector::projectile_subtype type) const;
+			[[nodiscard]] zdraw::rgba lerp_color(const zdraw::rgba& a, const zdraw::rgba& b, float t) const;
 		};
 
 		inline player g_player{};
@@ -221,7 +352,7 @@ namespace features {
 		class grenades
 		{
 		public:
-			void on_render( zdraw::draw_list& draw_list );
+			void on_render(zdraw::draw_list& draw_list);
 
 		private:
 			struct trajectory
@@ -247,19 +378,17 @@ namespace features {
 				bool corrected{};
 			};
 
-			[[nodiscard]] bool can_predict( ) const;
-			void update_weapon_properties( );
-			void setup_throw( math::vector3& origin, math::vector3& velocity );
-
-			void update_in_flight( );
-			[[nodiscard]] std::uintptr_t hash_from_projectile( systems::collector::projectile_subtype type ) const;
-
-			void simulate( const math::vector3& start, const math::vector3& velocity, trajectory& out );
-			void step_simulation( math::vector3& pos, math::vector3& vel, systems::bvh::trace_result& trace, bool& detonated );
-			void resolve_collision( const systems::bvh::trace_result& trace, math::vector3& pos, math::vector3& vel, bool& detonated );
-			[[nodiscard]] bool should_detonate( const math::vector3& vel, int tick ) const;
-			[[nodiscard]] math::vector3 clip_velocity( const math::vector3& velocity, const math::vector3& normal, float overbounce );
-			void render_trajectory( zdraw::draw_list& draw_list, const trajectory& traj, float alpha ) const;
+			[[nodiscard]] bool can_predict() const;
+			void update_weapon_properties();
+			void setup_throw(math::vector3& origin, math::vector3& velocity);
+			void update_in_flight();
+			[[nodiscard]] std::uintptr_t hash_from_projectile(systems::collector::projectile_subtype type) const;
+			void simulate(const math::vector3& start, const math::vector3& velocity, trajectory& out);
+			void step_simulation(math::vector3& pos, math::vector3& vel, systems::bvh::trace_result& trace, bool& detonated);
+			void resolve_collision(const systems::bvh::trace_result& trace, math::vector3& pos, math::vector3& vel, bool& detonated);
+			[[nodiscard]] bool should_detonate(const math::vector3& vel, int tick) const;
+			[[nodiscard]] math::vector3 clip_velocity(const math::vector3& velocity, const math::vector3& normal, float overbounce);
+			void render_trajectory(zdraw::draw_list& draw_list, const trajectory& traj, float alpha) const;
 
 			std::uintptr_t m_weapon_vdata{};
 			std::uintptr_t m_weapon_hash{};
@@ -292,7 +421,7 @@ namespace features {
 		class impacts
 		{
 		public:
-
+			void on_render(zdraw::draw_list& draw_list);
 		};
 
 		inline grenades g_grenades{};

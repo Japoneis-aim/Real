@@ -114,6 +114,9 @@
     <ClCompile Include="project\external\lz4\lz4.c">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="project\core\systems\impl\icons.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="project\stdafx.hpp">
@@ -162,9 +165,6 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="project\utilities\animation\animation.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="project\resources\fonts\weapons.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="project\resources\fonts\pixel7.hpp">
@@ -546,6 +546,24 @@
       <Filter>Header Files</Filter>
     </ClInclude>
     <ClInclude Include="project\external\config.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\external\nanosvg\include.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\external\nanosvg\x\nanosvg.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\external\nanosvg\x\nanosvgrast.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\core\memory\safe_read.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\core\offsets\offsets.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\core\offsets\game_structs.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
   </ItemGroup>
