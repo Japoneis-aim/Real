@@ -1,2 +1,28 @@
 # Auto detect text files and perform LF normalization
+# Normalize text files to LF in the repository.
 * text=auto
+
+# C/C++ source files
+*.c text
+*.cpp text
+*.h text
+*.hpp text
+
+# Visual Studio project/solution files
+*.sln text eol=crlf
+*.vcxproj text eol=crlf
+*.vcxproj.filters text eol=crlf
+*.props text eol=crlf
+*.targets text eol=crlf
+
+# Binary/build files
+*.exe binary
+*.dll binary
+*.lib binary
+*.obj binary
+*.pdb binary
+*.ilk binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary

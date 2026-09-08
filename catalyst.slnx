@@ -1,0 +1,7 @@
+<Solution>
+  <Configurations>
+    <BuildType Name="Release" />
+    <Platform Name="x64" />
+  </Configurations>
+  <Project Path="catalyst/catalyst.vcxproj" Id="150e10b1-ca58-445d-ad12-d62cfa830382" />
+</Solution>
