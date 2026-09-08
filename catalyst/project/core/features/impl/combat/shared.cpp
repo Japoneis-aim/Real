@@ -849,3 +849,4 @@ static bool build_hitbox_capsule_v2(
 	}
 
 } // namespace features::combat
+
