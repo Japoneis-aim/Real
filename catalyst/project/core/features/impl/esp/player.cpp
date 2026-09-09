@@ -10,22 +10,26 @@ namespace features::esp {
 			return;
 		}
 
-		const auto global_vars = g::memory.read<std::uintptr_t>( g::offsets.global_vars );
-		if ( !global_vars )
+		// current_time já é lido pelo shared::tick() no thread de combat — reusar em vez de
+		// fazer outra chamada ReadProcessMemory aqui no render thread.
+		const auto current_time = features::combat::g_shared.ctx( ).current_time;
+		if ( current_time == 0.0f )
 		{
+			// shared ainda não inicializado (primeiro frame) — pula
 			return;
 		}
 
-		const auto current_time = g::memory.read<float>( global_vars + 0x30 );
-
-		for ( const auto& player : systems::g_collector.players( ) )
+		systems::g_collector.with_players( [&]( const std::vector<systems::collector::player>& players_list )
+		{
+		for ( const auto& player : players_list )
 		{
 			if ( !systems::g_local.is_enemy( player.team ) )
 			{
 				continue;
 			}
 
-			const auto bones = systems::g_bones.get( player.bone_cache );
+			// Usa bones já cacheados pelo collector — evita segunda leitura de memória
+			const auto& bones = player.cached_bones;
 			if ( !bones.is_valid( ) )
 			{
 				continue;
@@ -79,6 +83,7 @@ namespace features::esp {
 				this->add_flags( draw_list, bounds, player, cfg.m_info_flags, offsets );
 			}
 		}
+		} ); // with_players
 	}
 
 	void player::add_box( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const settings::esp::player::box& cfg, bool is_visible )
@@ -196,7 +201,10 @@ namespace features::esp {
 		const auto hp = std::clamp( player.health / 100.0f, 0.0f, 1.0f );
 		const auto flash_t = std::clamp( 1.0f - ( current_time - anim.last_damage_time ) * 2.5f, 0.0f, 1.0f );
 
-		std::vector<std::vector<poly2d::point>> pills;
+		// thread_local static: reutiliza a memória já alocada entre frames — evita
+		// pressão no alocador com vários inimigos na tela.
+		thread_local static std::vector<std::vector<poly2d::point>> pills;
+		pills.clear( );
 
 		for ( const auto& hb : player.hitboxes )
 		{
@@ -304,7 +312,9 @@ namespace features::esp {
 					const auto red = zdraw::rgba{ 220, 40, 40, flash_alpha };
 					const auto tris = poly2d::triangulate( outline );
 
-					std::vector<float> clipped;
+					// thread_local static: reutiliza buffer entre frames
+					thread_local static std::vector<float> clipped;
+					clipped.clear( );
 					clipped.reserve( tris.size( ) * 2 );
 
 					auto clip_triangle_above = [ & ]( float x0, float y0, float x1, float y1, float x2, float y2 )
@@ -374,7 +384,9 @@ namespace features::esp {
 
 			if ( cfg.outline )
 			{
-				std::vector<float> flat;
+				// thread_local static: reutiliza buffer entre frames
+				thread_local static std::vector<float> flat;
+				flat.clear( );
 				flat.reserve( outline.size( ) * 2 );
 
 				for ( const auto& p : outline )
@@ -721,6 +733,33 @@ namespace features::esp {
 		zdraw::pop_font( );
 
 		offsets.right += max_w + 4.0f;
+
+		// Look direction: linha da cabeça na direção do eyeAngles do inimigo (~60 units)
+		if ( cfg.look_dir && player.cached_bones.is_valid( ) )
+		{
+			// Posição da cabeça (bone 6 = head no CS2)
+			const auto head_world = player.cached_bones.get_position( 6 );
+			if ( head_world.length_sqr( ) > 1.0f )
+			{
+				const float pitch = math::helpers::deg_to_rad( player.eye_angles.x );
+				const float yaw   = math::helpers::deg_to_rad( player.eye_angles.y );
+				const float cp    = std::cosf( pitch );
+				const float sp    = std::sinf( pitch );
+				const float cy    = std::cosf( yaw );
+				const float sy    = std::sinf( yaw );
+
+				const math::vector3 dir{ cp * cy, cp * sy, -sp };
+				const math::vector3 end_world = head_world + dir * 60.0f;
+
+				const auto s1 = systems::g_view.project( head_world );
+				const auto s2 = systems::g_view.project( end_world );
+
+				if ( systems::g_view.projection_valid( s1 ) && systems::g_view.projection_valid( s2 ) )
+				{
+					draw_list.add_line( s1.x, s1.y, s2.x, s2.y, cfg.look_dir_color, 1.2f );
+				}
+			}
+		}
 	}
 
 } // namespace features::esp

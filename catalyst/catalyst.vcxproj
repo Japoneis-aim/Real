@@ -37,7 +37,7 @@
   </PropertyGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
     <ClCompile>
-      <WarningLevel>TurnOffAllWarnings</WarningLevel>
+      <WarningLevel>Level3</WarningLevel>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
       <SDLCheck>true</SDLCheck>
@@ -58,14 +58,19 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClCompile Include="project\core\features\impl\combat\aim_controller.cpp" />
     <ClCompile Include="project\core\features\impl\combat\legit.cpp" />
+    <ClCompile Include="project\core\features\impl\combat\rcs.cpp" />
     <ClCompile Include="project\core\features\impl\combat\shared.cpp" />
     <ClCompile Include="project\core\features\impl\esp\item.cpp" />
     <ClCompile Include="project\core\features\impl\esp\player.cpp" />
     <ClCompile Include="project\core\features\impl\esp\projectile.cpp" />
+    <ClCompile Include="project\core\features\impl\misc\bombtimer.cpp" />
     <ClCompile Include="project\core\features\impl\misc\grenades.cpp" />
     <ClCompile Include="project\core\features\impl\misc\impacts.cpp" />
+    <ClCompile Include="project\core\features\impl\misc\wallbang.cpp" />
     <ClCompile Include="project\core\menu\menu.cpp" />
+    <ClCompile Include="project\core\render\stream_mode.cpp" />
     <ClCompile Include="project\core\systems\impl\bones.cpp" />
     <ClCompile Include="project\core\systems\impl\bounds.cpp" />
     <ClCompile Include="project\core\systems\impl\bvh.cpp" />
@@ -103,10 +108,14 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="project\core\features\features.hpp" />
+    <ClInclude Include="project\core\features\impl\misc\bombtimer.hpp" />
+    <ClInclude Include="project\core\features\impl\misc\wallbang.hpp" />
     <ClInclude Include="project\core\memory\safe_read.hpp" />
     <ClInclude Include="project\core\menu\menu.hpp" />
     <ClInclude Include="project\core\offsets\game_structs.hpp" />
+    <ClInclude Include="project\core\offsets\globals.hpp" />
     <ClInclude Include="project\core\offsets\offsets.hpp" />
+    <ClInclude Include="project\core\render\stream_mode.hpp" />
     <ClInclude Include="project\external\config.hpp" />
     <ClInclude Include="project\external\lz4\lz4.h" />
     <ClInclude Include="project\external\nanosvg\include.hpp" />
@@ -251,10 +260,15 @@
     <ClInclude Include="project\external\xorstr.hpp" />
     <ClInclude Include="project\utilities\random.hpp" />
     <ClInclude Include="project\utilities\timing\timing.hpp" />
+    <ClInclude Include="resource.h" />
   </ItemGroup>
   <ItemGroup>
     <Library Include="project\external\zdraw\external\freetype\freetype.lib" />
   </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Resource.rc" />
+  </ItemGroup>
+  <!-- Removed babuindo.ico -->
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
   </ImportGroup>

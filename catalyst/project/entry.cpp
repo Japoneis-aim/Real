@@ -7,11 +7,17 @@ int main( )
 {
 	timeBeginPeriod( 1 );
 
+	// Carrega o mapa de offsets gerado (output/offsets.map).
+	// Deve ser feito antes de qualquer inicialização que dependa de offsets_map::get(),
+	// como o bomb timer (dwPlantedC4) e o aim punch offset em legit.
+	offsets_map::load_from_file( "output/offsets.map" );
+
 	{
 		settings::g_combat.register_config( "combat" );
 		settings::g_esp.register_config( "esp" );
 		settings::g_misc.register_config( "misc" );
 		config::initialize( );
+		config_persist::load( ); // carrega config salva anteriormente (se existir)
 	}
 
 	{
@@ -49,8 +55,8 @@ int main( )
 	}
 
 	{
-		std::thread( threads::game ).detach( );
-		std::thread( threads::combat ).detach( );
+		threads::game_thread   = std::jthread( threads::game );
+		threads::combat_thread = std::jthread( threads::combat );
 
 		if ( !g::render.initialize( ) )
 		{

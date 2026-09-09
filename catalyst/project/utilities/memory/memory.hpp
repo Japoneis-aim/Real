@@ -5,6 +5,7 @@ class memory
 public:
 	bool initialize( std::wstring_view process_name );
 	bool read( std::uintptr_t address, void* buffer, std::size_t size ) const;
+	bool write( std::uintptr_t address, const void* buffer, std::size_t size ) const;
 
 	template <typename T>
 	T read( std::uintptr_t address ) const
@@ -12,6 +13,12 @@ public:
 		T value{};
 		this->read( address, &value, sizeof( T ) );
 		return value;
+	}
+
+	template <typename T>
+	bool write( std::uintptr_t address, const T& value ) const
+	{
+		return this->write( address, &value, sizeof( T ) );
 	}
 
 	template <typename T = std::uintptr_t>

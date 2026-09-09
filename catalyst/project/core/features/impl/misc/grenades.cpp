@@ -1,5 +1,4 @@
 #include <stdafx.hpp>
-#include "../../../memory/safe_read.hpp"
 
 namespace features::misc {
 
@@ -32,16 +31,25 @@ namespace features::misc {
 					return false;
 				}
 
-				for ( const auto& proj : systems::g_collector.projectiles( ) )
+				bool still_alive = false;
+				systems::g_collector.with_projectiles( [&]( const std::vector<systems::collector::projectile>& projs )
 				{
-					if ( proj.entity == g.entity )
+					for ( const auto& proj : projs )
 					{
-						return false;
+						if ( proj.entity == g.entity )
+						{
+							still_alive = true;
+							break;
+						}
 					}
-				}
+				} );
 
-				return true;
+				return !still_alive;
 			} );
+
+		const auto [display_w, display_h] = zdraw::get_display_size( );
+		const float cx = display_w * 0.5f;
+		const float cy = display_h * 0.5f;
 
 		for ( auto& gren : this->m_in_flight )
 		{
@@ -74,6 +82,18 @@ namespace features::misc {
 			if ( alpha > 0.0f )
 			{
 				this->render_trajectory( draw_list, gren.traj, alpha );
+
+				// Draw crosshair→grenade connection line for grenades still in flight
+				if ( !gren.detonated && !gren.traj.points.empty( ) )
+				{
+					const auto sp = systems::g_view.project( gren.traj.points[ 0 ] );
+					if ( systems::g_view.projection_valid( sp ) )
+					{
+						const auto line_a = static_cast< std::uint8_t >( 80.0f * alpha );
+						draw_list.add_line( cx, cy, sp.x, sp.y,
+							{ cfg.color.value.r, cfg.color.value.g, cfg.color.value.b, line_a }, 1.5f );
+					}
+				}
 			}
 		}
 
@@ -256,7 +276,6 @@ namespace features::misc {
 	void grenades::update_in_flight( )
 	{
 		const auto& cfg = settings::g_misc.m_grenades;
-		const auto projectiles = systems::g_collector.projectiles( );
 		const auto controller = systems::g_local.controller( );
 
 		if ( !controller )
@@ -268,6 +287,10 @@ namespace features::misc {
 		const auto now = std::chrono::steady_clock::now( );
 
 		std::unordered_set<std::uintptr_t> alive{};
+
+		// Usa with_projectiles para evitar cópia desnecessária do vetor
+		systems::g_collector.with_projectiles( [&]( const std::vector<systems::collector::projectile>& projectiles )
+		{
 
 		for ( const auto& proj : projectiles )
 		{
@@ -346,6 +369,8 @@ namespace features::misc {
 			this->m_weapon_hash = saved;
 			this->m_in_flight.push_back( std::move( gren ) );
 		}
+
+		} ); // with_projectiles
 
 		for ( auto& gren : this->m_in_flight )
 		{

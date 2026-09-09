@@ -223,6 +223,16 @@ void menu::draw_combat( )
 
 		zui::slider_int( "fov##ab", cfg.aimbot.fov, 1, 45 );
 		zui::slider_int( "smoothing##ab", cfg.aimbot.smoothing, 0, 50 );
+		// ========== NOVAS FEATURES ==========
+		zui::checkbox( "assist mode##ab", cfg.aimbot.assist_mode );
+		zui::checkbox( "humanize##ab", cfg.aimbot.humanize );
+
+		if ( zui::begin_popup( "##ab_humanize_popup", 200.0f ) ) {
+			zui::slider_float( "humanize strength##ab", cfg.aimbot.humanize_strength, 0.0f, 100.0f, "%.0f%%" );
+			zui::end_popup();
+		}
+
+		zui::slider_float( "rcs strength##ab", cfg.aimbot.rcs_strength, 0.0f, 100.0f, "%.0f%%" );
 		zui::checkbox( "head only##ab", cfg.aimbot.head_only );
 		zui::checkbox( "visible only##ab", cfg.aimbot.visible_only );
 
@@ -281,15 +291,7 @@ void menu::draw_combat( )
 			zui::end_popup( );
 		}
 
-		zui::checkbox( "zeusbot##ot", settings::g_combat.m_other.m_zeusbot.enabled );
-
-		if ( zui::begin_popup( "##ot_zeusbot_popup", 200.0f ) )
-		{
-			zui::keybind( "key##ot_zb", settings::g_combat.m_other.m_zeusbot.key );
-			zui::slider_float( "max fov##ot_zb", settings::g_combat.m_other.m_zeusbot.max_fov, 1.0f, 180.0f, "%.0f" );
-			zui::end_popup( );
-		}
-
+		// zeusbot removido — não implementado
 		zui::end_group_box( );
 	}
 }
@@ -397,10 +399,10 @@ void menu::draw_esp( )
 		zui::checkbox( "info flags##if", p.m_info_flags.enabled );
 		if ( zui::begin_popup( "##if_popup", 200.0f ) )
 		{
-			constexpr const char* flag_names[ ]{ "money", "armor", "kit", "scoped", "defusing", "flashed", "distance" };
-			constexpr settings::esp::player::info_flags::flag flag_values[ ]{ settings::esp::player::info_flags::money, settings::esp::player::info_flags::armor, settings::esp::player::info_flags::kit, settings::esp::player::info_flags::scoped, settings::esp::player::info_flags::defusing, settings::esp::player::info_flags::flashed, settings::esp::player::info_flags::distance, };
+			constexpr const char* flag_names[ ]{ "money", "armor", "kit", "scoped", "defusing", "flashed", "ping", "distance" };
+			constexpr settings::esp::player::info_flags::flag flag_values[ ]{ settings::esp::player::info_flags::money, settings::esp::player::info_flags::armor, settings::esp::player::info_flags::kit, settings::esp::player::info_flags::scoped, settings::esp::player::info_flags::defusing, settings::esp::player::info_flags::flashed, settings::esp::player::info_flags::ping, settings::esp::player::info_flags::distance, };
 
-			for ( auto i = 0; i < 7; ++i )
+			for ( auto i = 0; i < 8; ++i )
 			{
 				auto active = p.m_info_flags.has( flag_values[ i ] );
 
@@ -418,6 +420,9 @@ void menu::draw_esp( )
 			}
 
 			zui::separator( );
+			zui::checkbox( "look direction##ld", p.m_info_flags.look_dir );
+
+			zui::separator( );
 			zui::color_picker( "money##if", p.m_info_flags.money_color );
 			zui::color_picker( "armor##if", p.m_info_flags.armor_color );
 			zui::color_picker( "kit##if", p.m_info_flags.kit_color );
@@ -425,6 +430,7 @@ void menu::draw_esp( )
 			zui::color_picker( "defusing##if", p.m_info_flags.defusing_color );
 			zui::color_picker( "flashed##if", p.m_info_flags.flashed_color );
 			zui::color_picker( "distance##if", p.m_info_flags.distance_color );
+			zui::color_picker( "look dir##ld", p.m_info_flags.look_dir_color );
 			zui::end_popup( );
 		}
 
@@ -517,6 +523,17 @@ void menu::draw_misc( )
 	{
 		zui::checkbox( "grenade prediction##gr", settings::g_misc.m_grenades.enabled );
 
+		// ========== NOVAS FEATURES ==========
+		zui::checkbox( "wallbang indicator##wb", settings::g_misc.m_wallbang.enabled );
+		zui::checkbox( "bomb timer##bt", settings::g_misc.m_bombtimer.enabled );
+		zui::checkbox( "no flash##nf", settings::g_misc.m_no_flash.enabled );
+		zui::checkbox( "stream mode##sm", settings::g_misc.m_stream_mode.enabled );
+
+		if ( zui::begin_popup( "##sm_popup", 200.0f ) ) {
+			zui::text( "hides overlay from OBS/Discord" );
+			zui::end_popup();
+		}
+
 		if ( zui::begin_popup( "##gr_popup", 200.0f ) )
 		{
 			zui::checkbox( "local only##gr", settings::g_misc.m_grenades.local_only );
@@ -539,6 +556,50 @@ void menu::draw_misc( )
 
 	if ( zui::begin_group_box( "config", col_w ) )
 	{
+		// ── Quick file-based save/load ──────────────────────────────────────
+		{
+			const auto& qs = zui::get_style( );
+			const auto [qs_avail_w, qs_avail_h] = zui::get_content_region_avail( );
+			constexpr auto qs_btn_h{ 22.0f };
+			const auto qs_half_w = ( qs_avail_w - qs.item_spacing_x ) * 0.5f;
+
+			static bool save_flash{};
+			static float save_flash_timer{};
+			const auto qs_dt = zdraw::get_delta_time( );
+			if ( save_flash && ( save_flash_timer += qs_dt ) > 1.5f )
+			{
+				save_flash = false;
+			}
+
+			if ( save_flash )
+			{
+				zui::push_style_color( zui::style_color::button_bg, zdraw::rgba{ 60, 160, 60, 120 } );
+			}
+
+			if ( zui::button( save_flash ? "saved!##qsave" : "save cfg##qsave", qs_half_w, qs_btn_h ) )
+			{
+				if ( config_persist::save( ) )
+				{
+					save_flash = true;
+					save_flash_timer = 0.0f;
+				}
+			}
+
+			if ( save_flash )
+			{
+				zui::pop_style_color( 1 );
+			}
+
+			zui::same_line( );
+
+			if ( zui::button( "load cfg##qload", qs_half_w, qs_btn_h ) )
+			{
+				config_persist::load( );
+			}
+		}
+
+		zui::separator( );
+
 		static std::string search_buf;
 		static std::vector<std::wstring> config_list;
 		static int selected{ -1 };

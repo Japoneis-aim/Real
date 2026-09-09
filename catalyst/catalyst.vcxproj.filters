@@ -84,9 +84,6 @@
     <ClCompile Include="project\core\features\impl\combat\shared.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="project\core\features\impl\combat\legit.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
     <ClCompile Include="project\core\systems\impl\hitboxes.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
@@ -115,6 +112,24 @@
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="project\core\systems\impl\icons.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="project\core\features\impl\misc\wallbang.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="project\core\features\impl\misc\bombtimer.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="project\core\render\stream_mode.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="project\core\features\impl\combat\legit.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="project\core\features\impl\combat\aim_controller.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="project\core\features\impl\combat\rcs.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>
@@ -566,8 +581,30 @@
     <ClInclude Include="project\core\offsets\game_structs.hpp">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="project\core\features\impl\misc\wallbang.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\core\features\impl\misc\bombtimer.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="project\core\render\stream_mode.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="resource.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Library Include="project\external\zdraw\external\freetype\freetype.lib" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="Resource.rc">
+      <Filter>Resource Files</Filter>
+    </ResourceCompile>
+  </ItemGroup>
+  <ItemGroup>
+    <Resource Include="babuindo.ico">
+      <Filter>Resource Files</Filter>
+    </Resource>
   </ItemGroup>
 </Project>

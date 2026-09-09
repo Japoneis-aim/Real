@@ -8,6 +8,8 @@ namespace settings {
 		{
 			config::f<bool, "enabled"> enabled{ true };
 			config::f<int, "key"> key{ VK_XBUTTON2 };
+			// Tecla que alterna o aimbot/aim-assist on/off (toggle, não hold)
+			config::f<int, "toggle_key"> toggle_key{ VK_F2 };
 
 			config::f<int, "fov"> fov{ 5 };
 			config::f<int, "smoothing"> smoothing{ 5 };
@@ -23,7 +25,16 @@ namespace settings {
 
 			config::f<bool, "predictive"> predictive{ true };
 
-			CONFIG_MEMBERS( enabled, key, fov, smoothing, autowall, min_damage, head_only, visible_only, draw_fov, fov_color, predictive )
+			// ========== NOVAS FEATURES ==========
+			config::f<bool, "assist_mode"> assist_mode{ false };
+			config::f<float, "assist_strength"> assist_strength{ 0.3f };
+			config::f<bool, "humanize"> humanize{ true };
+			config::f<float, "humanize_strength"> humanize_strength{ 50.0f };
+			config::f<float, "rcs_strength"> rcs_strength{ 70.0f };
+			// Tecla que alterna o RCS on/off independentemente do aimbot
+			config::f<int, "rcs_key"> rcs_key{ VK_F3 };
+
+			CONFIG_MEMBERS( enabled, key, toggle_key, fov, smoothing, autowall, min_damage, head_only, visible_only, draw_fov, fov_color, predictive, assist_mode, assist_strength, humanize, humanize_strength, rcs_strength, rcs_key )
 		};
 
 		struct triggerbot
@@ -49,18 +60,7 @@ namespace settings {
 			config::f<zdraw::rgba, "penetration color yes"> penetration_color_yes{ { 50, 255, 50, 125 } };
 			config::f<zdraw::rgba, "penetration color no"> penetration_color_no{ { 255, 50, 50, 125 } };
 
-			struct zeusbot
-			{
-				config::f<bool, "enabled"> enabled{ true };
-				config::f<int, "key"> key{ VK_XBUTTON2 };
-				config::f<float, "max fov"> max_fov{ 180.0f };
-
-				CONFIG_MEMBERS( enabled, key, max_fov )
-			};
-
-			config::g<zeusbot, "zeusbot"> m_zeusbot{};
-
-			CONFIG_MEMBERS( penetration_crosshair, penetration_color_yes, penetration_color_no, m_zeusbot )
+			CONFIG_MEMBERS( penetration_crosshair, penetration_color_yes, penetration_color_no )
 		};
 
 		struct group_config
@@ -222,10 +222,14 @@ namespace settings {
 				config::f<zdraw::rgba, "defusing color"> defusing_color{ { 140, 150, 235, 255 } };
 				config::f<zdraw::rgba, "flashed color"> flashed_color{ { 255, 210, 120, 255 } };
 				config::f<zdraw::rgba, "distance color"> distance_color{ { 90, 95, 130, 255 } };
+				config::f<zdraw::rgba, "look dir color"> look_dir_color{ { 255, 255, 80, 180 } };
 
 				[[nodiscard]] bool has( flag f ) const { return this->flags.value & f; }
 
-				CONFIG_MEMBERS( enabled, flags, money_color, armor_color, kit_color, scoped_color, defusing_color, flashed_color, distance_color )
+				// look_dir controlado por bool separado — não cabe no uint8 flags
+				config::f<bool, "look dir"> look_dir{ false };
+
+				CONFIG_MEMBERS( enabled, flags, money_color, armor_color, kit_color, scoped_color, defusing_color, flashed_color, distance_color, look_dir_color, look_dir )
 			};
 
 			config::g<info_flags, "info flags"> m_info_flags{};
@@ -360,7 +364,44 @@ namespace settings {
 		config::f<bool, "limit fps"> limit_fps{ true };
 		config::f<int, "fps limit"> fps_limit{ 240 };
 
-		CONFIG_MEMBERS( m_grenades, limit_fps, fps_limit )
+		// ========== NOVAS FEATURES ==========
+		struct wallbang
+		{
+			config::f<bool, "enabled"> enabled{ true };
+			CONFIG_MEMBERS(enabled)
+		};
+		config::g<wallbang, "wallbang"> m_wallbang{};
+
+		struct bombtimer
+		{
+			config::f<bool, "enabled"> enabled{ true };
+			CONFIG_MEMBERS(enabled)
+		};
+		config::g<bombtimer, "bombtimer"> m_bombtimer{};
+
+		struct stream_mode
+		{
+			config::f<bool, "enabled"> enabled{ false };
+			CONFIG_MEMBERS(enabled)
+		};
+		config::g<stream_mode, "stream_mode"> m_stream_mode{};
+
+		struct impacts_cfg
+		{
+			config::f<bool, "enabled"> enabled{ true };
+			config::f<float, "lifetime"> lifetime{ 4.0f };
+			CONFIG_MEMBERS(enabled, lifetime)
+		};
+		config::g<impacts_cfg, "impacts"> m_impacts{};
+
+		struct no_flash
+		{
+			config::f<bool, "enabled"> enabled{ false };
+			CONFIG_MEMBERS(enabled)
+		};
+		config::g<no_flash, "no_flash"> m_no_flash{};
+
+		CONFIG_MEMBERS( m_grenades, limit_fps, fps_limit, m_wallbang, m_bombtimer, m_stream_mode, m_impacts, m_no_flash )
 	};
 
 	inline combat g_combat{};

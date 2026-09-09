@@ -70,6 +70,9 @@ namespace systems {
 			p.is_defusing = g::memory.read<bool>( player_pawn + SCHEMA( "C_CSPlayerPawn", "m_bIsDefusing"_hash ) );
 			p.is_flashed = g::memory.read<float>( player_pawn + SCHEMA( "C_CSPlayerPawnBase", "m_flFlashBangTime"_hash ) ) > 0.0f;
 			p.ping = g::memory.read<int>( entry.ptr + SCHEMA( "CCSPlayerController", "m_iPing"_hash ) );
+			if ( const auto shots_off = SCHEMA( "C_CSPlayerPawn", "m_iShotsFired"_hash ) )
+				p.shots_fired = g::memory.read<int>( player_pawn + shots_off );
+			p.eye_angles = g::memory.read<math::vector3>( player_pawn + SCHEMA( "C_CSPlayerPawn", "m_angEyeAngles"_hash ) );
 
 			const auto game_scene_node = g::memory.read<std::uintptr_t>( player_pawn + SCHEMA( "C_BaseEntity", "m_pGameSceneNode"_hash ) );
 			if ( game_scene_node )
@@ -79,9 +82,29 @@ namespace systems {
 				p.origin = g::memory.read<math::vector3>( game_scene_node + SCHEMA( "CGameSceneNode", "m_vecAbsOrigin"_hash ) );
 
 				{
-					const auto head = systems::g_bones.get( p.bone_cache ).get_position( 6 );
-					p.is_visible = !systems::g_bvh.trace_ray( systems::g_view.origin( ), head ).hit;
-					p.hitboxes = systems::g_hitboxes.query( game_scene_node );
+					// Dirty-flag cache de bones + hitboxes por controller ptr.
+					// Se bone_cache ptr não mudou, reutiliza os dados do frame anterior
+					// sem nenhuma leitura de memória adicional (bones são ~750 bytes de RPM).
+					auto& bh = this->m_bone_hitbox_cache[ entry.ptr ];
+					if ( bh.last_bone_cache_ptr != p.bone_cache || !bh.cached_bones.is_valid( ) )
+					{
+						bh.cached_bones      = systems::g_bones.get( p.bone_cache );
+						bh.cached_hitboxes   = systems::g_hitboxes.query( game_scene_node );
+						bh.last_bone_cache_ptr = p.bone_cache;
+					}
+					p.cached_bones = bh.cached_bones;
+					p.hitboxes     = bh.cached_hitboxes;
+
+					// is_visible multi-ponto: testa cabeça (bone 6), peito (bone 4) e pelvis (bone 1).
+					// Considerar visível se QUALQUER ponto passar — evita que o player seja marcado
+					// como occluded quando só a cabeça está atrás de uma parede mas o torso não.
+					const auto view_org = systems::g_view.origin( );
+					const auto check_visible = [ & ]( std::uint32_t bone_idx ) -> bool {
+						const auto pos = p.cached_bones.get_position( bone_idx );
+						if ( pos.length_sqr( ) < 1.0f ) return false;
+						return !systems::g_bvh.trace_ray( view_org, pos ).hit;
+					};
+					p.is_visible = check_visible( 6 ) || check_visible( 4 ) || check_visible( 1 );
 				}
 			}
 
@@ -107,13 +130,29 @@ namespace systems {
 							p.weapon.ammo = g::memory.read<int>( p.weapon.ptr + SCHEMA( "C_BasePlayerWeapon", "m_iClip1"_hash ) );
 							p.weapon.max_ammo = g::memory.read<int>( p.weapon.vdata + SCHEMA( "CBasePlayerWeaponVData", "m_iMaxClip1"_hash ) );
 
-							const auto weapon_name_ptr = g::memory.read<std::uintptr_t>( p.weapon.vdata + SCHEMA( "CCSWeaponBaseVData", "m_szName"_hash ) );
-							if ( weapon_name_ptr )
+							// Cache do nome da arma por weapon.ptr — o nome não muda enquanto
+							// o jogador não trocar de arma (ptr diferente = cache miss = releitura).
+							// Evita read_string + alocação de string a cada frame por jogador.
+							static std::unordered_map<std::uintptr_t, std::string> s_weapon_name_cache;
+							auto it = s_weapon_name_cache.find( p.weapon.ptr );
+							if ( it != s_weapon_name_cache.end( ) )
 							{
-								p.weapon.name = g::memory.read_string( weapon_name_ptr, 64 );
-								if ( p.weapon.name.starts_with( "weapon_" ) )
+								p.weapon.name = it->second;
+							}
+							else
+							{
+								const auto weapon_name_ptr = g::memory.read<std::uintptr_t>( p.weapon.vdata + SCHEMA( "CCSWeaponBaseVData", "m_szName"_hash ) );
+								if ( weapon_name_ptr )
 								{
-									p.weapon.name.erase( 0, 7 );
+									p.weapon.name = g::memory.read_string( weapon_name_ptr, 64 );
+									if ( p.weapon.name.starts_with( "weapon_" ) )
+										p.weapon.name.erase( 0, 7 );
+
+									// Limita o cache a 128 entradas para não vazar memória indefinidamente
+									if ( s_weapon_name_cache.size( ) >= 128 )
+										s_weapon_name_cache.clear( );
+
+									s_weapon_name_cache.emplace( p.weapon.ptr, p.weapon.name );
 								}
 							}
 						}
@@ -138,8 +177,15 @@ namespace systems {
 		}
 
 		{
+			// Ordena do mais próximo para o mais distante.
+			// O triggerbot (trace_crosshair) retorna o primeiro hit válido,
+			// então os jogadores mais próximos devem vir primeiro no vetor.
+			// O ESP desenha em ordem inversa (mais distante primeiro via painter's
+			// algorithm), mas isso é responsabilidade do render, não do collector.
 			const auto view_origin = systems::g_view.origin( );
-			std::ranges::sort( fresh, [ &view_origin ]( const player& a, const player& b ) { return view_origin.distance( a.origin ) > view_origin.distance( b.origin ); } );
+			std::ranges::sort( fresh, [ &view_origin ]( const player& a, const player& b ) {
+				return view_origin.distance( a.origin ) < view_origin.distance( b.origin );
+			} );
 		}
 
 		std::unique_lock lock( this->m_mutex );
@@ -206,7 +252,7 @@ namespace systems {
 		std::vector<projectile> fresh{};
 		fresh.reserve( 32 );
 
-		const auto current_time = g::memory.read<float>( g::memory.read<std::uintptr_t>( g::offsets.global_vars ) + 0x30 );
+		const auto current_time = g::memory.read<float>( g::memory.read<std::uintptr_t>( g::offsets.global_vars ) + cs2::global_vars_cur_time );
 
 		for ( const auto& entry : raw )
 		{

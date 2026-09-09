@@ -34,6 +34,20 @@ namespace systems {
 		const auto health = g::memory.read<int>( player_pawn + SCHEMA( "C_BaseEntity", "m_iHealth"_hash ) );
 		this->m_alive.store( health > 0 );
 
+		// Lê a velocidade Z do pawn local (para gate de pulo/queda no triggerbot)
+		const auto velocity = g::memory.read<math::vector3>( player_pawn + SCHEMA( "C_BaseEntity", "m_vecVelocity"_hash ) );
+		this->m_velocity_z.store( velocity.z );
+
+		// No-flash: zera m_flFlashDuration a cada tick enquanto a opção estiver ativa.
+		// A engine soma a duração no rendering — 0.f = sem efeito de cegueira.
+		// Método idêntico ao da source de referência (Data.cpp:33).
+		if ( settings::g_misc.m_no_flash.enabled )
+		{
+			static const auto flash_offset = SCHEMA( "C_CSPlayerPawnBase", "m_flFlashDuration"_hash );
+			if ( flash_offset )
+				g::memory.write<float>( player_pawn + flash_offset, 0.f );
+		}
+
 		if ( this->m_alive.load( ) )
 		{
 			this->m_view_team.store( team_num );
@@ -139,6 +153,7 @@ namespace systems {
 		this->m_weapon.store( 0 );
 		this->m_weapon_vdata.store( 0 );
 		this->m_weapon_type.store( 0 );
+		this->m_velocity_z.store( 0.f );
 	}
 
 } // namespace systems

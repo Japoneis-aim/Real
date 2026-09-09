@@ -25,10 +25,8 @@ private:
 	static LRESULT CALLBACK wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
 
 	HWND m_hwnd{};
-	HWND m_input_hwnd{};
 	HWND m_prev_foreground{};
 	ATOM m_atom{};
-	bool m_input_visible{};
 	bool m_was_open{};
 
 	ID3D11Device* m_device{};
@@ -37,6 +35,7 @@ private:
 	ID3D11RenderTargetView* m_rtv{};
 
 	loaded_fonts m_fonts{};
+	timing::limiter m_fps_limiter{ 240 };
 
 	static constexpr const wchar_t* k_class_name{ L"catalyst.overlay" };
 };

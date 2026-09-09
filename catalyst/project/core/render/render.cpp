@@ -18,14 +18,16 @@ bool render::initialize( )
 
 	constexpr MARGINS margins{ -1, -1, -1, -1 };
 	::DwmExtendFrameIntoClientArea( this->m_hwnd, &margins );
-	::SetLayeredWindowAttributes( this->m_hwnd, 0, 255, LWA_ALPHA );
-	::ShowWindow( this->m_hwnd, SW_SHOW );
-	::UpdateWindow( this->m_hwnd );
+	::SetLayeredWindowAttributes( this->m_hwnd, RGB( 255, 0, 255 ), 0, LWA_COLORKEY );
 
 	if ( !this->setup_d3d( ) )
 	{
 		return false;
 	}
+
+	// ShowWindow só após D3D pronto — evita frame preto antes do primeiro Present
+	::ShowWindow( this->m_hwnd, SW_SHOW );
+	::UpdateWindow( this->m_hwnd );
 
 	g::console.print( "render initialized." );
 
@@ -46,7 +48,7 @@ bool render::register_window_class( )
 	wc.style = CS_HREDRAW | CS_VREDRAW;
 	wc.lpfnWndProc = wnd_proc;
 	wc.hInstance = ::GetModuleHandleW( nullptr );
-	wc.hbrBackground = static_cast< HBRUSH >( ::GetStockObject( BLACK_BRUSH ) );
+	wc.hbrBackground = nullptr; // sem background brush — o D3D limpa com alpha=0
 	wc.hCursor = ::LoadCursorW( nullptr, IDC_ARROW );
 	wc.lpszClassName = k_class_name;
 
@@ -56,7 +58,9 @@ bool render::register_window_class( )
 
 void render::run( )
 {
-	constexpr float clear[ 4 ]{ 0.0f, 0.0f, 0.0f, 0.0f };
+	// Magenta puro como clear color — combina com o LWA_COLORKEY RGB(255,0,255).
+	// Tudo que não for desenhado fica magenta → transparente pelo DWM.
+	constexpr float clear[ 4 ]{ 1.0f, 0.0f, 1.0f, 1.0f };
 	MSG msg{};
 
 	while ( true )
@@ -79,6 +83,9 @@ void render::run( )
 
 		zdraw::begin_frame( );
 		{
+			// Sincroniza stream mode com a configuração do usuário
+			core::render::g_stream_mode.toggle( static_cast<bool>( settings::g_misc.m_stream_mode.enabled ) );
+
 			auto& draw_list = zdraw::get_draw_list( zdraw::draw_layer::background );
 
 			if ( systems::g_local.valid( ) )
@@ -89,24 +96,36 @@ void render::run( )
 				features::esp::g_projectile.on_render( draw_list );
 				features::misc::g_grenades.on_render( draw_list );
 				features::combat::g_legit.on_render( draw_list );
+				features::misc::g_wallbang.on_render( draw_list );
+				features::misc::g_bomb_timer.on_render( draw_list );
 			}
 
 			g::menu.draw( );
 		}
 		zdraw::end_frame( );
 
-		if ( FAILED( this->m_swap_chain->Present( 0, 0 ) ) )
+		const auto hr_present = this->m_swap_chain->Present( 0, 0 );
+		if ( FAILED( hr_present ) )
 		{
+			// DXGI_ERROR_DEVICE_REMOVED / DXGI_ERROR_DEVICE_RESET:
+			// GPU driver crash, alt+tab fullscreen exclusivo, TDR, etc.
+			// Qualquer falha de Present é irrecuperável sem recriar o device.
+			g::console.print( "render: Present failed (0x{:08X}) — shutting down.", static_cast<unsigned>( hr_present ) );
 			break;
 		}
 
 		if ( settings::g_misc.limit_fps )
 		{
-			static timing::limiter limiter( settings::g_misc.fps_limit );
-			limiter.set_target( settings::g_misc.fps_limit );
-			limiter.limit( );
+			this->m_fps_limiter.set_target( settings::g_misc.fps_limit );
+			this->m_fps_limiter.limit( );
 		}
 	}
+
+	// Ao sair do loop — parar threads filhas e sinalizar encerramento.
+	// DXGI_ERROR_DEVICE_REMOVED / DXGI_ERROR_DEVICE_RESET chegam aqui;
+	// qualquer outro erro de Present também.
+	threads::shutdown( );
+	::PostQuitMessage( 0 );
 }
 
 void render::update_input_window( )
@@ -114,13 +133,15 @@ void render::update_input_window( )
 	const auto open = g::menu.is_open( );
 	const auto style = ::GetWindowLongW( this->m_hwnd, GWL_EXSTYLE );
 
+	// Preserva WS_EX_LAYERED sempre — necessário para composição DWM per-pixel alpha.
+	// Apenas toggling WS_EX_TRANSPARENT para habilitar/desabilitar input na overlay.
 	if ( open )
 	{
-		::SetWindowLongW( this->m_hwnd, GWL_EXSTYLE, style & ~WS_EX_TRANSPARENT );
+		::SetWindowLongW( this->m_hwnd, GWL_EXSTYLE, ( style & ~WS_EX_TRANSPARENT ) | WS_EX_LAYERED );
 	}
 	else
 	{
-		::SetWindowLongW( this->m_hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT );
+		::SetWindowLongW( this->m_hwnd, GWL_EXSTYLE, style | WS_EX_TRANSPARENT | WS_EX_LAYERED );
 	}
 
 	if ( open && !this->m_was_open )
@@ -169,13 +190,16 @@ void render::update_input_window( )
 bool render::setup_d3d( )
 {
 	DXGI_SWAP_CHAIN_DESC desc{};
-	desc.BufferCount = 2;
-	desc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.BufferCount = 1;
+	// BGRA obrigatório para transparência via DWM + WS_EX_LAYERED.
+	desc.BufferDesc.Format = DXGI_FORMAT_B8G8R8A8_UNORM;
 	desc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
 	desc.OutputWindow = this->m_hwnd;
 	desc.SampleDesc.Count = 1;
 	desc.Windowed = TRUE;
+	// DISCARD (não FLIP_DISCARD): FLIP_DISCARD é incompatível com WS_EX_LAYERED + LWA_COLORKEY.
 	desc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+	desc.Flags = 0;
 
 	D3D_FEATURE_LEVEL levels[ ]{ D3D_FEATURE_LEVEL_11_1, D3D_FEATURE_LEVEL_11_0 };
 	D3D_FEATURE_LEVEL selected{};

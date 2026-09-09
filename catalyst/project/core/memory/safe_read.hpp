@@ -6,8 +6,11 @@
 #include <cstddef>
 #include "../../utilities/memory/memory.hpp"
 
-// Safety wrapper around g::memory.read for typed and raw reads.
-// Use explicit template read and the buffer read signature defined in utilities.
+// safe_read.hpp — utilitários de leitura de memória com retorno opcional.
+// Usado principalmente por schemas.cpp para walkthrough de estruturas internas.
+//
+// Para leitura simples prefira g::memory.read<T>(addr) diretamente.
+// Use safe_read_opt quando precisar distinguir falha de leitura de valor zero.
 namespace memutil {
 
 	template<typename T>
@@ -16,22 +19,21 @@ namespace memutil {
 		if ( !addr )
 			return std::nullopt;
 
-		// Prefer the templated reader when available; for trivially copyable types
-		// we conservatively use the buffer read signature to detect failures.
-		if constexpr ( std::is_trivially_copyable_v<T> )
-		{
-			T out{};
-			if ( !g::memory.read( addr, &out, sizeof( T ) ) )
-				return std::nullopt;
+		// Apenas tipos trivially copyable são suportados com garantia de detecção de falha.
+		// Para tipos não-triviais (ex: std::string) a leitura via RPM não faz sentido —
+		// use g::memory.read_string() ou APIs específicas.
+		static_assert(
+			std::is_trivially_copyable_v<T>,
+			"safe_read_opt<T>: T deve ser trivially copyable. "
+			"Para strings use g::memory.read_string(). "
+			"Para tipos complexos use g::memory.read<T>() diretamente."
+		);
 
-			return out;
-		}
-		else
-		{
-			// Use templated read which typically returns a value.
-			T value = g::memory.read<T>( addr );
-			return value;
-		}
+		T out{};
+		if ( !g::memory.read( addr, &out, sizeof( T ) ) )
+			return std::nullopt;
+
+		return out;
 	}
 
 	inline bool safe_read_bytes( std::uintptr_t addr, void* dest, std::size_t size )

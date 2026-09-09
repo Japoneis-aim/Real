@@ -8,15 +8,27 @@
 // core systems types
 #include "../systems/systems.hpp"
 
+// Novas features
+#include "impl/misc/wallbang.hpp"
+#include "impl/misc/bombtimer.hpp"
+#include "impl/combat/aim_controller.hpp"
+#include "impl/combat/rcs.hpp"
+#include "../render/stream_mode.hpp"
+
 namespace features {
 
 	namespace combat {
+
+			class AimController; // forward declare persistent controller
 
 		class legit
 		{
 		public:
 			void on_render(zdraw::draw_list& draw_list);
 			void tick();
+
+			// destructor default
+			~legit() = default;
 
 			struct target
 			{
@@ -90,35 +102,13 @@ namespace features {
 
 			// --- FOV ---
 			[[nodiscard]] float get_fov(const math::vector3& view_angles, const math::vector3& eye_pos, const math::vector3& target_pos) const;
-			[[nodiscard]] float get_fov_radius(const math::vector3& eye_pos, const math::vector3& view_angles, float fov_degrees) const;
 
 			// --- Aim ---
 			[[nodiscard]] float calculate_deg_per_pixel() const;
-			void apply_aim(
-				const math::vector3& eye_pos,
-				const math::vector3& view_angles,
-				const math::vector3& aim_point,
-				float deg_per_pixel,
-				const settings::combat::aimbot& cfg
-			);
-			[[nodiscard]] float apply_smoothing(float delta, float delta_length, int smoothing) const;
+			// NOTE: apply_aim removed in favor of AimController member usage
 
 			// --- Render ---
-			void draw_penetration_crosshair(zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles);
 			void draw_fov(zdraw::draw_list& draw_list, const math::vector3& eye_pos, const math::vector3& view_angles, const settings::combat::aimbot& cfg);
-
-			// --- Aimbot ---
-			void aimbot(
-				const math::vector3& eye_pos,
-				const math::vector3& view_angles,
-				const target& tgt,
-				const settings::combat::aimbot& cfg
-			);
-			void zeusbot(
-				const math::vector3& eye_pos,
-				const math::vector3& view_angles,
-				const std::vector<systems::collector::player>& players
-			);
 
 			// --- Triggerbot ---
 			[[nodiscard]] trigger_result trace_crosshair(
@@ -151,6 +141,16 @@ namespace features {
 			random::valve_rng m_rng{};
 			bool m_rng_seeded{};
 			math::vector2 m_aim_error{};
+			// Aim pipeline state
+			math::vector2 m_accum_recoil{};
+			math::vector2 m_prev_punch{};
+			float m_last_frame_time{};
+			std::uintptr_t m_aim_punch_offset{};        // m_aimPunchAngle (fallback, path antigo)
+			std::uintptr_t m_camera_services_offset{};  // m_pCameraServices (path atual CS2)
+			std::uintptr_t m_view_punch_offset{};       // m_vecCsViewPunchAngle em CameraServices
+			bool m_offsets_cached{};
+			// Persistent AimController to keep RCS/humanize state between frames
+			AimController m_aim_controller{}; // objeto direto, sem ponteiro
 			float m_trigger_delay_end{};
 			bool m_trigger_waiting{};
 			bool m_trigger_held{};
@@ -268,6 +268,9 @@ namespace features {
 
 		inline legit g_legit{};
 		inline shared g_shared{};
+
+		// Toggle global do aimbot/aim-assist — alterado via toggle_key na config
+		inline std::atomic<bool> g_aimbot_enabled{ true };
 
 	} // namespace combat
 

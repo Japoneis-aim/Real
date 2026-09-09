@@ -77,5 +77,32 @@ bool offsets::initialize( )
 		}
 	}
 
+	// ─── Offsets carregados do offsets.map (dinâmicos, sem pattern scan) ───
+	// offsets_map::get() retorna 0 se a chave não existir.
+	// Só somamos o base se o valor for != 0 — caso contrário mantemos 0
+	// para que os guards "if (!g::offsets.xxx)" funcionem corretamente.
+	{
+		auto load_client = [ & ]( const char* key ) -> std::uintptr_t
+		{
+			const auto rva = offsets_map::get( key );
+			return rva ? g::modules.client + rva : 0;
+		};
+		auto load_engine = [ & ]( const char* key ) -> std::uintptr_t
+		{
+			const auto rva = offsets_map::get( key );
+			return rva ? g::modules.engine2 + rva : 0;
+		};
+
+		planted_c4      = load_client( "dwPlantedC4" );
+		prediction      = load_client( "dwPrediction" );
+		sensitivity     = load_client( "dwSensitivity" );
+		view_angles     = load_client( "dwViewAngles" );
+		view_render     = load_client( "dwViewRender" );
+		weapon_c4       = load_client( "dwWeaponC4" );
+
+		build_number        = load_engine( "dwBuildNumber" );
+		network_game_client = load_engine( "dwNetworkGameClient" );
+	}
+
 	return true;
 }

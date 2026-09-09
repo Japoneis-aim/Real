@@ -40,10 +40,18 @@ namespace features::combat {
 			float armor_ratio, float headshot_multiplier,
 			float& damage )
 		{
-			const auto ct_head = systems::g_convars.get<float>( CONVAR( "mp_damage_scale_ct_head"_hash ) );
-			const auto t_head  = systems::g_convars.get<float>( CONVAR( "mp_damage_scale_t_head"_hash ) );
-			const auto ct_body = systems::g_convars.get<float>( CONVAR( "mp_damage_scale_ct_body"_hash ) );
-			const auto t_body  = systems::g_convars.get<float>( CONVAR( "mp_damage_scale_t_body"_hash ) );
+			// Cacheamos os ponteiros das convars uma única vez (thread-safe via static init).
+			// Os valores flutuantes são relidos a cada chamada pois podem mudar em modo custom,
+			// mas a resolução do ponteiro (find convar) é cara e só precisa acontecer uma vez.
+			static const auto cv_ct_head = CONVAR( "mp_damage_scale_ct_head"_hash );
+			static const auto cv_t_head  = CONVAR( "mp_damage_scale_t_head"_hash );
+			static const auto cv_ct_body = CONVAR( "mp_damage_scale_ct_body"_hash );
+			static const auto cv_t_body  = CONVAR( "mp_damage_scale_t_body"_hash );
+
+			const auto ct_head = systems::g_convars.get<float>( cv_ct_head );
+			const auto t_head  = systems::g_convars.get<float>( cv_t_head );
+			const auto ct_body = systems::g_convars.get<float>( cv_ct_body );
+			const auto t_body  = systems::g_convars.get<float>( cv_t_body );
 
 			const auto is_ct = ( team == 3 );
 			const auto head_scale = is_ct ? ct_head : t_head;
@@ -169,29 +177,6 @@ static math::vector3 get_capsule_axis( const math::vector3& half_extent )
 	return { 0.0f, 0.0f, longest };
 	}
 
-static bool build_hitbox_capsule(
-	const systems::collector::hitbox& hb,
-	const systems::bones::data::bone& bone,
-	math::vector3& out_capsule_start,
-	math::vector3& out_capsule_end,
-	float& out_radius )
-	{
-		if ( hb.index < 0 || hb.bone < 0 )
-			return false;
-
-		const auto center_local = ( hb.mins + hb.maxs ) * 0.5f;
-		const auto half_extent  = ( hb.maxs - hb.mins ) * 0.5f;
-		const auto axis_local   = get_capsule_axis( half_extent );
-
-		const auto center_world = bone.position + math::helpers::rotate_by_quat( bone.rotation, center_local );
-		const auto axis_world   = math::helpers::rotate_by_quat( bone.rotation, axis_local );
-
-		out_capsule_start = center_world - axis_world;
-		out_capsule_end   = center_world + axis_world;
-		out_radius        = hb.radius;
-		return true;
-	}
-
 static bool build_hitbox_capsule_v2(
 	const systems::collector::hitbox& hb,
 	const systems::bones::data::bone& bone,
@@ -246,7 +231,7 @@ static bool build_hitbox_capsule_v2(
 
 				math::vector3 capsule_start, capsule_end;
 				float radius;
-				if ( !build_hitbox_capsule( hb, bone, capsule_start, capsule_end, radius ) )
+				if ( !build_hitbox_capsule_v2( hb, bone, capsule_start, capsule_end, radius ) )
 					continue;
 
 				if ( !g_shared.ray_hits_capsule( seg_start, direction, capsule_start, capsule_end, radius ) )
@@ -440,7 +425,7 @@ static bool build_hitbox_capsule_v2(
 
 		const auto global_vars = g::memory.read<std::uintptr_t>( g::offsets.global_vars );
 		if ( global_vars )
-			ctx.current_time = g::memory.read<float>( global_vars + 0x30 );
+			ctx.current_time = g::memory.read<float>( global_vars + cs2::global_vars_cur_time );
 
 		ctx.cycle_time      = g::memory.read<float>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flCycleTime"_hash ) );
 		ctx.last_shot_time  = g::memory.read<float>( ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_fLastShotTime"_hash ) );
@@ -530,7 +515,9 @@ static bool build_hitbox_capsule_v2(
 		math::vector3 forward, right, up;
 		aim_angle.to_directions( &forward, &right, &up );
 
-		constexpr auto samples = 256;
+		// 64 samples dão precisão estatística suficiente para o gate do triggerbot
+		// (erro ~±6% vs ±3% com 256) com 4× menos custo no thread de combat.
+		constexpr auto samples = 64;
 		auto hits = 0;
 
 		for ( int seed = 0; seed < samples; ++seed )
@@ -666,7 +653,12 @@ static bool build_hitbox_capsule_v2(
 
 		const auto ping        = g::memory.read<int>( controller + SCHEMA( "CCSPlayerController", "m_iPing"_hash ) );
 		const auto latency     = static_cast<float>( ping ) * 0.001f;
-		const auto interp_time = g::memory.read<float>( pawn + 0x290 );
+		// FIX: substituído offset hardcoded +0x290 por SCHEMA().
+		// m_flInterpolationAmount é o campo correto para interp time no CS2.
+		static const auto interp_offset = SCHEMA( "C_BasePlayerPawn", "m_flInterpolationAmount"_hash );
+		const auto interp_time = interp_offset
+			? g::memory.read<float>( pawn + interp_offset )
+			: 0.0f;
 
 		return latency * 0.5f + interp_time;
 	}

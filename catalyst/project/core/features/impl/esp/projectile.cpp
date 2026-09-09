@@ -10,7 +10,7 @@ namespace features::esp {
 			return;
 		}
 
-		const auto current_time = g::memory.read<float>( g::memory.read<std::uintptr_t>( g::offsets.global_vars ) + 0x30 );
+		const auto current_time = g::memory.read<float>( g::memory.read<std::uintptr_t>( g::offsets.global_vars ) + cs2::global_vars_cur_time );
 
 		for ( const auto& proj : systems::g_collector.projectiles( ) )
 		{

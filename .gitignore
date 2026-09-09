@@ -3,6 +3,9 @@
 ##
 ## Get latest from https://github.com/github/gitignore/blob/main/VisualStudio.gitignore
 
+# Arquivos gerados por dumpers externos (schema dumps, offset dumps)
+output/
+
 # User-specific files
 *.rsuser
 *.suo

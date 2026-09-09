@@ -46,11 +46,14 @@
 
 // core
 #include <core/settings.hpp>
+#include <core/offsets/globals.hpp>
+#include <core/offsets/game_structs.hpp>
 #include <core/systems/systems.hpp>
 #include <core/render/render.hpp>
 #include <core/threads/threads.hpp>
 #include <core/features/features.hpp>
 #include <core/menu/menu.hpp>
+#include <core/config_persist.hpp>
 
 namespace g {
 

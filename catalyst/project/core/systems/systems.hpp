@@ -93,6 +93,18 @@ namespace systems {
 			return this->m_view_team.load( ) != other_team;
 		}
 
+		// Velocidade vertical do pawn local — usada para gate de pulo/queda no triggerbot.
+		[[nodiscard]] float velocity_z( ) const { return m_velocity_z.load( ); }
+
+		// Gate global: cursor visível = jogo perdeu foco (menu, scoreboard, console, dead).
+		// Triggerbot, RCS e aimbot não devem injetar input nesse estado.
+		[[nodiscard]] static bool is_cursor_visible( )
+		{
+			CURSORINFO ci{};
+			ci.cbSize = sizeof( ci );
+			return ::GetCursorInfo( &ci ) && ( ci.flags & CURSOR_SHOWING );
+		}
+
 	private:
 		void reset( );
 
@@ -107,6 +119,7 @@ namespace systems {
 		std::atomic<std::uintptr_t> m_weapon{};
 		std::atomic<std::uintptr_t> m_weapon_vdata{};
 		std::atomic<std::uint32_t> m_weapon_type{};
+		std::atomic<float> m_velocity_z{ 0.f };  // componente Z da velocidade do pawn local
 	};
 
 	class view
@@ -232,12 +245,15 @@ namespace systems {
 			std::uintptr_t game_scene_node{};
 			std::uintptr_t bone_cache{};
 			math::vector3 origin{};
+			math::vector3 eye_angles{};    // m_angEyeAngles — usado pelo DrawLookDir
 			std::string display_name{};
 			weapon_info weapon{};
+			bones::data cached_bones{};   // bones lidos uma vez em collect_players
 			int health{};
 			int team{};
 			int money{};
 			int ping{};
+			int shots_fired{};  // m_iShotsFired — disparos acumulados nesta rajada
 			int armor{};
 			bool invulnerable{};
 			bool has_helmet{};
@@ -281,6 +297,30 @@ namespace systems {
 		[[nodiscard]] std::vector<item> items( ) const;
 		[[nodiscard]] std::vector<projectile> projectiles( ) const;
 
+		// Acessa a lista sem copiar o vetor: chama fn sob shared_lock.
+		// Preferir nos hot paths (render thread, combat thread) para evitar
+		// cópia de ~7.5 KB por frame (10 jogadores × ~756 bytes cached_bones).
+		template<typename Fn>
+		void with_players( Fn&& fn ) const
+		{
+			std::shared_lock lock( this->m_mutex );
+			fn( this->m_players );
+		}
+
+		template<typename Fn>
+		void with_items( Fn&& fn ) const
+		{
+			std::shared_lock lock( this->m_mutex );
+			fn( this->m_items );
+		}
+
+		template<typename Fn>
+		void with_projectiles( Fn&& fn ) const
+		{
+			std::shared_lock lock( this->m_mutex );
+			fn( this->m_projectiles );
+		}
+
 	private:
 		void collect_players( const std::vector<entities::cached>& raw );
 		void collect_items( const std::vector<entities::cached>& raw );
@@ -293,6 +333,16 @@ namespace systems {
 		std::vector<item> m_items{};
 		std::vector<projectile> m_projectiles{};
 		mutable std::shared_mutex m_mutex{};
+
+		// Cache de hitboxes e bones por controller ptr — dirty flag por bone_cache ptr.
+		// Evita re-leitura de memória cara a cada frame quando o player não moveu.
+		struct bone_hitbox_cache
+		{
+			std::uintptr_t  last_bone_cache_ptr{};  // se mudou, invalida
+			bones::data     cached_bones{};
+			hitboxes::set   cached_hitboxes{};
+		};
+		std::unordered_map<std::uintptr_t, bone_hitbox_cache> m_bone_hitbox_cache{};
 	};
 
 	class bvh
