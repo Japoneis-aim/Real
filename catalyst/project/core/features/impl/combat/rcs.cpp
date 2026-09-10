@@ -11,24 +11,6 @@ constexpr int   k_max_move_px = 120;
 constexpr float k_recoil_scale = 2.0f;
 
 // ----------------------------------------------------------------------------
-// Inicialização
-// ----------------------------------------------------------------------------
-
-void rcs::initialize_offsets( )
-{
-	if ( m_offsets_loaded )
-		return;
-
-	// CS2 atual: punch angle foi migrado para pawn → m_pCameraServices → m_vecCsViewPunchAngle.
-	// Guardamos os dois offsets e decidimos qual usar no tick() com base em qual está disponível.
-	m_punch_offset          = SCHEMA( "C_CSPlayerPawn",           "m_aimPunchAngle"_hash );
-	m_camera_services_offset = SCHEMA( "C_BasePlayerPawn",         "m_pCameraServices"_hash );
-	m_view_punch_offset      = SCHEMA( "CPlayer_CameraServices",   "m_vecCsViewPunchAngle"_hash );
-
-	m_offsets_loaded = true;
-}
-
-// ----------------------------------------------------------------------------
 // Injeção de mouse
 // ----------------------------------------------------------------------------
 
@@ -57,22 +39,74 @@ void rcs::reset( )
 }
 
 // ----------------------------------------------------------------------------
+// Helper: deg/count — mesma fórmula que legit::calculate_deg_per_pixel()
+// Retorna quantos graus de visão correspondem a 1 count de mouse injection.
+// Formula: sensitivity * m_yaw * fov_sensitivity_adjust
+// Inverso (counts/grau) é usado para converter graus de punch em counts.
+// Resultado é cacheado por k_deg_cache_ticks ticks para evitar leituras de
+// memória e convar desnecessárias (fov_adjust raramente muda mid-game).
+// ----------------------------------------------------------------------------
+
+float rcs::calculate_deg_per_count( )
+{
+	// Retorna do cache se ainda válido
+	if ( m_deg_cache_tick > 0 )
+	{
+		--m_deg_cache_tick;
+		return m_cached_deg_per_count;
+	}
+
+	const auto pawn = systems::g_local.pawn( );
+	if ( !pawn )
+		return 0.0f;
+
+	constexpr float m_yaw = 0.022f; // CS2: yaw fixo (não é convar)
+	const auto sensitivity = systems::g_convars.get<float>( CONVAR( "sensitivity"_hash ) );
+	if ( sensitivity <= 0.0f )
+		return 0.0f;
+
+	const auto fov_adjust = g::memory.read<float>(
+		pawn + SCHEMA( "C_BasePlayerPawn", "m_flFOVSensitivityAdjust"_hash )
+	);
+	const auto adj = ( fov_adjust > 0.0f ) ? fov_adjust : 1.0f;
+
+	m_cached_deg_per_count = sensitivity * m_yaw * adj;
+	m_deg_cache_tick = k_deg_cache_ticks;
+	return m_cached_deg_per_count;
+}
+
+// ----------------------------------------------------------------------------
 // Tick principal — chamado a 128 Hz pelo thread de combat
 // ----------------------------------------------------------------------------
 
 void rcs::tick( )
 {
-	initialize_offsets( );
-
-	// Processar toggle por tecla (detecta borda de subida — bit 0)
-	const auto& ctx_for_cfg = features::combat::g_shared.ctx( );
-	if ( ctx_for_cfg.valid )
+	// ── Toggle por tecla: edge detection explícito ────────────────────────
+	// GetAsyncKeyState bit 0 ("tecla pressionada desde o último GetAsyncKeyState")
+	// pode ser consumido por outra thread antes de chegarmos aqui.
+	// Usamos bit 15 (estado atual) + estado anterior para detectar a borda de subida.
 	{
-		const auto& cfg_rcs = settings::g_combat.get( ctx_for_cfg.weapon_type );
-		const int rcs_key = static_cast<int>( cfg_rcs.aimbot.rcs_key );
-		if ( rcs_key && ( ::GetAsyncKeyState( rcs_key ) & 1 ) )
+		const auto& ctx_for_cfg = features::combat::g_shared.ctx( );
+		if ( ctx_for_cfg.valid )
 		{
-			m_toggle_on = !m_toggle_on;
+			const auto& cfg_rcs = settings::g_combat.get( ctx_for_cfg.weapon_type );
+
+			// Se o RCS está desabilitado na config, não faz nada
+			if ( !cfg_rcs.aimbot.rcs_enabled )
+			{
+				reset( );
+				m_prev_key_state = false;
+				return;
+			}
+
+			const int rcs_key = static_cast<int>( cfg_rcs.aimbot.rcs_key );
+			if ( rcs_key )
+			{
+				const bool key_down = ( ::GetAsyncKeyState( rcs_key ) & 0x8000 ) != 0;
+				if ( key_down && !m_prev_key_state )
+					m_toggle_on = !m_toggle_on;
+				m_prev_key_state = key_down;
+			}
 		}
 	}
 
@@ -134,34 +168,68 @@ void rcs::tick( )
 		return;
 	}
 
-	// Lê punch atual
+	// Lê ponteiro do pawn local — necessário tanto para o gate de shots_fired
+	// quanto para a leitura do punch angle logo abaixo.
 	const auto local_pawn = systems::g_local.pawn( );
-	if ( !local_pawn || !m_punch_offset )
+	if ( !local_pawn )
 	{
 		reset( );
 		return;
 	}
 
+	// Gate shots_fired: verifica via collector se o jogador local disparou pelo menos
+	// 2 tiros. Mais confiável que recoil_index sozinho porque shots_fired é atualizado
+	// sincronamente com o disparo, enquanto recoil_index pode ter latência de um tick.
+	// Buscamos o pawn local no vetor de players do collector (vem via with_players).
+	// Se shots_fired == 0, é primeiro tiro desta rajada — não compensar.
+	{
+		bool shots_gate_pass = true; // default: pass (se não achar o player, confia no recoil_index)
+		systems::g_collector.with_players( [&]( const std::vector<systems::collector::player>& players )
+		{
+			for ( const auto& p : players )
+			{
+				if ( p.pawn == local_pawn )
+				{
+					// shots_fired == 0 ou 1 → primeiro disparo da rajada, não compensar ainda
+					shots_gate_pass = ( p.shots_fired >= 2 );
+					break;
+				}
+			}
+		} );
+
+		if ( !shots_gate_pass )
+		{
+			reset( );
+			return;
+		}
+	}
+
 	// CS2 atual: punch angle está em pawn → m_pCameraServices → m_vecCsViewPunchAngle.
+	// Offsets centralizados em g_shared — inicializados via lazy-init thread-safe
+	// na primeira chamada (evita duplicar flag/campo em cada feature).
 	// Fallback para m_aimPunchAngle direto no pawn caso CameraServices não esteja disponível.
+	const auto cam_svc_off  = features::combat::g_shared.camera_services_offset( );
+	const auto view_pch_off = features::combat::g_shared.view_punch_offset( );
+	const auto aim_pch_off  = features::combat::g_shared.aim_punch_offset( );
+
 	math::vector2 cur_punch{};
 	bool got_punch = false;
 
-	if ( m_camera_services_offset && m_view_punch_offset )
+	if ( cam_svc_off && view_pch_off )
 	{
-		const auto cam_svc = g::memory.read<std::uintptr_t>( local_pawn + m_camera_services_offset );
+		const auto cam_svc = g::memory.read<std::uintptr_t>( local_pawn + cam_svc_off );
 		if ( cam_svc )
 		{
 			// m_vecCsViewPunchAngle é um QAngle (3 floats). Lemos os 2 primeiros (pitch/yaw).
-			const auto v = g::memory.read<math::vector3>( cam_svc + m_view_punch_offset );
+			const auto v = g::memory.read<math::vector3>( cam_svc + view_pch_off );
 			cur_punch   = { v.x, v.y };
 			got_punch   = true;
 		}
 	}
 
-	if ( !got_punch && m_punch_offset )
+	if ( !got_punch && aim_pch_off )
 	{
-		const auto v  = g::memory.read<math::vector3>( local_pawn + m_punch_offset );
+		const auto v  = g::memory.read<math::vector3>( local_pawn + aim_pch_off );
 		cur_punch     = { v.x, v.y };
 		got_punch     = true;
 	}
@@ -196,27 +264,38 @@ void rcs::tick( )
 	};
 	m_prev_punch = cur_punch;
 
-	// Pixels por grau (resolução horizontal / FOV horizontal)
-	const auto [sw, sh] = zdraw::get_display_size( );
-	const float camera_fov = systems::g_view.has_camera( ) ? systems::g_view.fov( ) : 90.0f;
-	const float px_per_deg = static_cast<float>( sw ) / camera_fov;
+	// ── FIX: fórmula de conversão graus → counts ─────────────────────────
+	// ERRADO: sw / camera_fov  (pixels de tela / FOV  ≠  counts de mouse / grau)
+	// CORRETO: 1 / deg_per_count  onde deg_per_count = sensitivity * m_yaw * fov_adj
+	//
+	// Raciocínio: o CS2 aplica o yaw da câmera como:
+	//   view_angle += mouse_counts * sensitivity * m_yaw * fov_adj
+	// Portanto para compensar N graus de punch precisamos de:
+	//   counts = N / (sensitivity * m_yaw * fov_adj)
+	const float deg_per_count = calculate_deg_per_count( );
+	if ( deg_per_count <= 0.0f )
+		return;
+	const float counts_per_deg = 1.0f / deg_per_count;
 
 	// Compensação vertical (pitch) e horizontal (yaw).
 	// delta.x = pitch → mouse Y (recuo para cima = mover mouse para baixo)
 	// delta.y = yaw   → mouse X (drift lateral do padrão, ex: AK47)
-	m_owed_y -= delta.x * k_recoil_scale * rcs_scale * px_per_deg;
-	m_owed_x -= delta.y * k_recoil_scale * rcs_scale * px_per_deg;
+	m_owed_y -= delta.x * k_recoil_scale * rcs_scale * counts_per_deg;
+	m_owed_x -= delta.y * k_recoil_scale * rcs_scale * counts_per_deg;
 
 	// Aplica step máximo para movimento suave
-	float step_x = std::clamp( m_owed_x, -k_max_step, k_max_step );
-	float step_y = std::clamp( m_owed_y, -k_max_step, k_max_step );
-
-	const int rx = static_cast<int>( step_x );
-	const int ry = static_cast<int>( step_y );
+	const int rx = static_cast<int>( std::clamp( m_owed_x, -k_max_step, k_max_step ) );
+	const int ry = static_cast<int>( std::clamp( m_owed_y, -k_max_step, k_max_step ) );
 
 	// Acumula residual sub-pixel
 	m_owed_x -= static_cast<float>( rx );
 	m_owed_y -= static_cast<float>( ry );
+
+	// FIX: cap APÓS subtrair o step — evita cortar compensação legítima antes de aplicar.
+	// Cap em 2× k_max_step: limita dívida acumulada sem perder precisão por frame.
+	constexpr float k_owed_cap = k_max_step * 2.0f;
+	m_owed_x = std::clamp( m_owed_x, -k_owed_cap, k_owed_cap );
+	m_owed_y = std::clamp( m_owed_y, -k_owed_cap, k_owed_cap );
 
 	if ( rx != 0 || ry != 0 )
 		move_mouse( rx, ry );

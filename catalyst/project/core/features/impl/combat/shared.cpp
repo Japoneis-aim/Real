@@ -38,32 +38,22 @@ namespace features::combat {
 		static void scale_damage(
 			int hitgroup, int armor, bool has_helmet, int team,
 			float armor_ratio, float headshot_multiplier,
+			float ct_head_scale, float t_head_scale,
+			float ct_body_scale, float t_body_scale,
 			float& damage )
 		{
-			// Cacheamos os ponteiros das convars uma única vez (thread-safe via static init).
-			// Os valores flutuantes são relidos a cada chamada pois podem mudar em modo custom,
-			// mas a resolução do ponteiro (find convar) é cara e só precisa acontecer uma vez.
-			static const auto cv_ct_head = CONVAR( "mp_damage_scale_ct_head"_hash );
-			static const auto cv_t_head  = CONVAR( "mp_damage_scale_t_head"_hash );
-			static const auto cv_ct_body = CONVAR( "mp_damage_scale_ct_body"_hash );
-			static const auto cv_t_body  = CONVAR( "mp_damage_scale_t_body"_hash );
-
-			const auto ct_head = systems::g_convars.get<float>( cv_ct_head );
-			const auto t_head  = systems::g_convars.get<float>( cv_t_head );
-			const auto ct_body = systems::g_convars.get<float>( cv_ct_body );
-			const auto t_body  = systems::g_convars.get<float>( cv_t_body );
-
-			const auto is_ct = ( team == 3 );
-			const auto head_scale = is_ct ? ct_head : t_head;
-			const auto body_scale = is_ct ? ct_body : t_body;
+			// Valores de escala vêm do context (cacheados no tick) — sem reads de convar aqui.
+			const auto is_ct      = ( team == 3 );
+			const auto head_scale = is_ct ? ct_head_scale : t_head_scale;
+			const auto body_scale = is_ct ? ct_body_scale : t_body_scale;
 
 			switch ( hitgroup )
 			{
 				case 1:  damage *= headshot_multiplier * head_scale; break;
 				case 2:
 				case 4:
-				case 5:
-				case 8:  damage *= body_scale; break;
+				case 5:  damage *= body_scale; break;
+				case 8:  break; // hitgroup 8 = Generic — sem modificador de dano no CS2
 				case 3:  damage *= 1.25f * body_scale; break;
 				case 6:
 				case 7:  damage *= 0.75f * body_scale; break;
@@ -71,7 +61,7 @@ namespace features::combat {
 			}
 
 			const auto is_head = ( hitgroup == 1 );
-			const auto is_armored = ( hitgroup >= 1 && hitgroup <= 5 ) || ( hitgroup == 8 );
+			const auto is_armored = ( hitgroup >= 1 && hitgroup <= 5 ); // hitgroup 8 não é protegido por armadura
 
 			if ( armor <= 0 || !is_armored || ( is_head && !has_helmet ) )
 			{
@@ -110,6 +100,30 @@ namespace features::combat {
 			.range             = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flRange"_hash ) ),
 			.armor_ratio       = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flArmorRatio"_hash ) ),
 			.headshot_multiplier = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flHeadshotMultiplier"_hash ) )
+		};
+	}
+
+	// prepare_with_scales: chamado no tick() após ler os convars de dano.
+	// Preenche weapon_data + as 4 escalas de dano de uma só vez.
+	void shared::penetration::prepare_with_scales(
+		std::uintptr_t weapon_vdata, std::uintptr_t weapon,
+		float ct_head, float t_head, float ct_body, float t_body )
+	{
+		if ( !weapon_vdata || !weapon )
+			return;
+
+		this->m_weapon_data = weapon_data
+		{
+			.damage              = static_cast<float>( g::memory.read<int>(    weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_nDamage"_hash ) ) ),
+			.penetration         = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flPenetration"_hash ) ),
+			.range_modifier      = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flRangeModifier"_hash ) ),
+			.range               = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flRange"_hash ) ),
+			.armor_ratio         = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flArmorRatio"_hash ) ),
+			.headshot_multiplier = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flHeadshotMultiplier"_hash ) ),
+			.damage_scale_ct_head = ct_head,
+			.damage_scale_t_head  = t_head,
+			.damage_scale_ct_body = ct_body,
+			.damage_scale_t_body  = t_body,
 		};
 	}
 
@@ -255,7 +269,10 @@ static bool build_hitbox_capsule_v2(
 
 				const auto hitgroup = systems::g_hitboxes.hitgroup_from_hitbox( hb.index );
 				detail::scale_damage( hitgroup, target.armor, target.has_helmet, target.team,
-					this->m_weapon_data.armor_ratio, this->m_weapon_data.headshot_multiplier, damage );
+					this->m_weapon_data.armor_ratio, this->m_weapon_data.headshot_multiplier,
+					this->m_weapon_data.damage_scale_ct_head, this->m_weapon_data.damage_scale_t_head,
+					this->m_weapon_data.damage_scale_ct_body, this->m_weapon_data.damage_scale_t_body,
+					damage );
 
 				if ( damage < 1.0f )
 					continue;
@@ -364,7 +381,10 @@ static bool build_hitbox_capsule_v2(
 
 		auto damage = this->m_weapon_data.damage;
 		detail::scale_damage( hitgroup, target_armor, has_helmet, target_team,
-			this->m_weapon_data.armor_ratio, this->m_weapon_data.headshot_multiplier, damage );
+			this->m_weapon_data.armor_ratio, this->m_weapon_data.headshot_multiplier,
+			this->m_weapon_data.damage_scale_ct_head, this->m_weapon_data.damage_scale_t_head,
+			this->m_weapon_data.damage_scale_ct_body, this->m_weapon_data.damage_scale_t_body,
+			damage );
 		return damage;
 	}
 
@@ -411,36 +431,63 @@ static bool build_hitbox_capsule_v2(
 			return;
 		}
 
-		ctx.weapon_type = g::memory.read<std::uint32_t>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_WeaponType"_hash ) );
+		// ── Batch read de weapon (C_CSWeaponBase) ────────────────────────────
+		// Agrupa recoil_index, bInReload, fLastShotTime, weaponMode, item_def_idx
+		// em 1 syscall em vez de 5 reads individuais.
+		// read_batch_fixed<0x1000>: buffer inline no stack — sem alocação heap por tick.
+		const auto weapon_batch = g::memory.read_batch_fixed<0x1000>( ctx.weapon );
+		if ( !weapon_batch.valid )
+		{
+			this->store_context( {} );
+			return;
+		}
+
+		// ── Batch read de weapon_vdata (CCSWeaponBaseVData) ──────────────────
+		// Agrupa weapon_type, num_bullets, spread, cycle_time, is_full_auto,
+		// inaccuracy_stand, inaccuracy_crouch em 1 syscall em vez de 7+ reads.
+		// read_batch_fixed<0x800>: buffer inline no stack — sem alocação heap por tick.
+		const auto vdata_batch = g::memory.read_batch_fixed<0x800>( ctx.weapon_vdata );
+		if ( !vdata_batch.valid )
+		{
+			this->store_context( {} );
+			return;
+		}
+
+		ctx.weapon_type   = vdata_batch.get<std::uint32_t>( SCHEMA( "CCSWeaponBaseVData", "m_WeaponType"_hash ) );
+		// item_def_idx está em weapon + m_AttributeManager + m_Item + m_iItemDefinitionIndex (chain de ponteiros)
+		// — precisa de read separado pois envolve deref de múltiplos ponteiros.
 		ctx.item_def_idx  = g::memory.read<std::uint16_t>(
 			ctx.weapon + SCHEMA( "C_EconEntity", "m_AttributeManager"_hash )
 			+ SCHEMA( "C_AttributeContainer", "m_Item"_hash )
 			+ SCHEMA( "C_EconItemView", "m_iItemDefinitionIndex"_hash )
 		);
-		ctx.num_bullets   = g::memory.read<int>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_nNumBullets"_hash ) );
-		ctx.inaccuracy    = this->get_inaccuracy( local_pawn, ctx.weapon, ctx.weapon_vdata, systems::g_view.angles( ) );
-		ctx.spread        = this->get_spread( ctx.weapon_vdata );
-		ctx.recoil_index  = g::memory.read<float>( ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_flRecoilIndex"_hash ) );
-		ctx.is_reloading  = g::memory.read<bool>( ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_bInReload"_hash ) );
+		ctx.num_bullets   = vdata_batch.get<int>(   SCHEMA( "CCSWeaponBaseVData", "m_nNumBullets"_hash ) );
+		ctx.recoil_index  = weapon_batch.get<float>( SCHEMA( "C_CSWeaponBase",    "m_flRecoilIndex"_hash ) );
+		ctx.is_reloading  = weapon_batch.get<bool>(  SCHEMA( "C_CSWeaponBase",    "m_bInReload"_hash ) );
+		ctx.cycle_time    = vdata_batch.get<float>(  SCHEMA( "CCSWeaponBaseVData", "m_flCycleTime"_hash ) );
+		ctx.last_shot_time = weapon_batch.get<float>( SCHEMA( "C_CSWeaponBase",   "m_fLastShotTime"_hash ) );
+		ctx.is_full_auto  = vdata_batch.get<bool>(   SCHEMA( "CCSWeaponBaseVData", "m_bIsFullAuto"_hash ) );
+
+		// spread e inaccuracy: usa os batches já lidos — elimina ~10 reads duplicados
+		// que get_inaccuracy() faria individualmente de weapon + weapon_vdata.
+		ctx.inaccuracy = this->get_inaccuracy_batched( local_pawn, weapon_batch, vdata_batch, systems::g_view.angles( ) );
+		// get_spread também usa vdata_batch: extrai m_flSpread sem syscall extra.
+		ctx.spread = vdata_batch.get<float>( SCHEMA( "CCSWeaponBaseVData", "m_flSpread"_hash ) );
 
 		const auto global_vars = g::memory.read<std::uintptr_t>( g::offsets.global_vars );
 		if ( global_vars )
 			ctx.current_time = g::memory.read<float>( global_vars + cs2::global_vars_cur_time );
 
-		ctx.cycle_time      = g::memory.read<float>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flCycleTime"_hash ) );
-		ctx.last_shot_time  = g::memory.read<float>( ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_fLastShotTime"_hash ) );
-		ctx.is_full_auto    = g::memory.read<bool>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_bIsFullAuto"_hash ) );
-
-		// Inaccuracy base
+		// Inaccuracy base — usa os dados já lidos no vdata_batch
 		{
 			const auto flags = g::memory.read<std::uint32_t>( local_pawn + SCHEMA( "C_BaseEntity", "m_fFlags"_hash ) );
-			const auto inaccuracy_stand  = g::memory.read<std::pair<float, float>>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyStand"_hash ) );
-			const auto inaccuracy_crouch = g::memory.read<std::pair<float, float>>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyCrouch"_hash ) );
+			const auto inaccuracy_stand  = vdata_batch.get<std::pair<float, float>>( SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyStand"_hash ) );
+			const auto inaccuracy_crouch = vdata_batch.get<std::pair<float, float>>( SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyCrouch"_hash ) );
 
 			const auto is_crouched = ( flags & ( 1 << 1 ) ) != 0;
 			const auto& etc = is_crouched ? inaccuracy_crouch : inaccuracy_stand;
 
-			const auto weapon_mode = g::memory.read<int>( ctx.weapon + SCHEMA( "C_CSWeaponBase", "m_weaponMode"_hash ) );
+			const auto weapon_mode = weapon_batch.get<int>( SCHEMA( "C_CSWeaponBase", "m_weaponMode"_hash ) );
 			ctx.base_inaccuracy = weapon_mode ? etc.second : etc.first;
 		}
 
@@ -457,7 +504,24 @@ static bool build_hitbox_capsule_v2(
 
 		ctx.valid = true;
 
-		this->m_pen.prepare( ctx.weapon_vdata, ctx.weapon );
+		// Lê os 4 convars de escala de dano UMA VEZ por tick e armazena no context.
+		// scale_damage() é chamado dentro do loop de hitchance (32 × N hitboxes),
+		// portanto sem cache cada tick resultaria em 32×N×4 = centenas de reads extras.
+		// Os valores são estáveis durante um tick (e na prática durante toda a partida).
+		{
+			static const auto cv_ct_head = CONVAR( "mp_damage_scale_ct_head"_hash );
+			static const auto cv_t_head  = CONVAR( "mp_damage_scale_t_head"_hash );
+			static const auto cv_ct_body = CONVAR( "mp_damage_scale_ct_body"_hash );
+			static const auto cv_t_body  = CONVAR( "mp_damage_scale_t_body"_hash );
+			ctx.damage_scale_ct_head = systems::g_convars.get<float>( cv_ct_head );
+			ctx.damage_scale_t_head  = systems::g_convars.get<float>( cv_t_head );
+			ctx.damage_scale_ct_body = systems::g_convars.get<float>( cv_ct_body );
+			ctx.damage_scale_t_body  = systems::g_convars.get<float>( cv_t_body );
+		}
+
+		this->m_pen.prepare_with_scales( ctx.weapon_vdata, ctx.weapon,
+			ctx.damage_scale_ct_head, ctx.damage_scale_t_head,
+			ctx.damage_scale_ct_body, ctx.damage_scale_t_body );
 		this->store_context( ctx );
 	}
 
@@ -477,7 +541,7 @@ static bool build_hitbox_capsule_v2(
 		const systems::collector::player& target,
 		const systems::bones::data& bones ) const
 	{
-		const auto& ctx = this->m_ctx;
+		const auto ctx = this->ctx(); // shared_lock — evita data race com store_context()
 		const auto total_spread = ctx.spread + ctx.inaccuracy;
 
 		if ( total_spread < 0.0001f )
@@ -487,6 +551,26 @@ static bool build_hitbox_capsule_v2(
 		if ( range <= 0.0f )
 			return 0.0f;
 
+		// Cache: se ângulo e posição não mudaram significativamente E cache ainda é recente,
+		// retorna resultado anterior sem recalcular os 32 samples de raycasting de cápsulas.
+		// now é lido UMA única vez e reutilizado na atualização do cache abaixo —
+		// evita 2 syscalls de clock por chamada (cada steady_clock::now() custa ~20 ns).
+		const auto now = std::chrono::steady_clock::now( );
+		{
+			const auto age_ms = std::chrono::duration<float, std::milli>( now - m_hitchance_cache.timestamp ).count( );
+
+			if ( age_ms < k_hitchance_cache_ms && m_hitchance_cache.last_target == &target && m_hitchance_cache.result >= 0.f )
+			{
+				const auto da = aim_angle - m_hitchance_cache.last_aim_angle;
+				const auto dp = eye_pos  - m_hitchance_cache.last_eye_pos;
+				const float angle_delta_sq = da.x * da.x + da.y * da.y;
+				const float pos_delta_sq   = dp.x * dp.x + dp.y * dp.y + dp.z * dp.z;
+
+				// Invalida por movimento de ângulo > 0.1° ou posição > 5u
+				if ( angle_delta_sq < k_hitchance_angle_thresh_sq && pos_delta_sq < 25.f )
+					return m_hitchance_cache.result;
+			}
+		}
 		struct capsule_t
 		{
 			math::vector3 start;
@@ -506,6 +590,12 @@ static bool build_hitbox_capsule_v2(
 			if ( !build_hitbox_capsule_v2( hb, bone, cap_start, cap_end, radius ) )
 				continue;
 
+			// Guard explícito: nunca exceder o tamanho do array de cápsulas.
+			// capsules.size() == 20; se o player tiver mais hitboxes (improvável mas possível),
+			// as extras são silenciosamente descartadas — o guard era implícito antes.
+			if ( capsule_count >= static_cast<int>( capsules.size( ) ) )
+				break;
+
 			capsules[ capsule_count++ ] = { cap_start, cap_end, radius };
 		}
 
@@ -515,9 +605,10 @@ static bool build_hitbox_capsule_v2(
 		math::vector3 forward, right, up;
 		aim_angle.to_directions( &forward, &right, &up );
 
-		// 64 samples dão precisão estatística suficiente para o gate do triggerbot
-		// (erro ~±6% vs ±3% com 256) com 4× menos custo no thread de combat.
-		constexpr auto samples = 64;
+		// 32 samples oferecem precisão suficiente para o gate do triggerbot
+		// (erro ~±8.8% vs ±6.25% com 64) com 50% menos custo no thread de combat.
+		// A early-exit por impossibilidade de acerto já corta mais iterações na prática.
+		constexpr auto samples = 32;
 		auto hits = 0;
 
 		for ( int seed = 0; seed < samples; ++seed )
@@ -539,12 +630,18 @@ static bool build_hitbox_capsule_v2(
 				break;
 		}
 
-		return static_cast<float>( hits ) / static_cast<float>( samples );
-	}
+		const float result = static_cast<float>( hits ) / static_cast<float>( samples );
 
-	// ============================================================================
-	// SPREAD
-	// ============================================================================
+		// Atualiza cache para evitar recalcular no próximo tick se nada mudou.
+		// Reutiliza `now` lido no início da função — sem segunda chamada ao clock.
+		m_hitchance_cache.result         = result;
+		m_hitchance_cache.last_eye_pos   = eye_pos;
+		m_hitchance_cache.last_aim_angle = aim_angle;
+		m_hitchance_cache.last_target    = &target;
+		m_hitchance_cache.timestamp      = now;
+
+		return result;
+	}
 
 	std::uint32_t shared::get_spread_seed( const math::vector3& angles, int tick ) const
 	{
@@ -720,6 +817,21 @@ static bool build_hitbox_capsule_v2(
 		std::uintptr_t weapon_vdata,
 		const math::vector3& eye_angles ) const
 	{
+		// Fallback: cria batches ad-hoc e delega para a versão batched.
+		// Evita duplicar a lógica; o overhead de 2 ReadProcessMemory extras
+		// só ocorre em chamadas fora do tick() (ex: wallbang preview).
+		const auto weapon_batch = g::memory.read_batch( weapon,       0x1000 );
+		const auto vdata_batch  = g::memory.read_batch( weapon_vdata, 0x800  );
+		return this->get_inaccuracy_batched( pawn, weapon_batch, vdata_batch, eye_angles );
+	}
+
+	float shared::get_inaccuracy_batched(
+		std::uintptr_t pawn,
+		const memory::batch_reader& weapon_batch,
+		const memory::batch_reader& vdata_batch,
+		const math::vector3& /*eye_angles*/ ) const
+	{
+		// Convars globais (baratos — ponteiro já cacheado via static no CONVAR macro).
 		const auto forcespread = systems::g_convars.get<float>( CONVAR( "weapon_accuracy_forcespread"_hash ) );
 		if ( forcespread > 0.0f )
 			return std::fminf( forcespread, 1.0f );
@@ -728,29 +840,34 @@ static bool build_hitbox_capsule_v2(
 		if ( nospread )
 			return 0.0f;
 
-		const auto fire_mode = g::memory.read<int>( weapon + SCHEMA( "C_CSWeaponBase", "m_weaponMode"_hash ) );
-		auto inaccuracy = g::memory.read<float>( weapon + SCHEMA( "C_CSWeaponBase", "m_fAccuracyPenalty"_hash ) );
-		const auto turning_inaccuracy = g::memory.read<float>( weapon + SCHEMA( "C_CSWeaponBase", "m_flTurningInaccuracy"_hash ) );
+		// Campos de weapon — extraídos do batch (0 syscalls adicionais).
+		const auto fire_mode         = weapon_batch.get<int>(   SCHEMA( "C_CSWeaponBase", "m_weaponMode"_hash ) );
+		const auto inaccuracy        = weapon_batch.get<float>( SCHEMA( "C_CSWeaponBase", "m_fAccuracyPenalty"_hash ) );
+		const auto turning_inaccuracy = weapon_batch.get<float>( SCHEMA( "C_CSWeaponBase", "m_flTurningInaccuracy"_hash ) );
 
-		const auto max_speed_pair         = g::memory.read<std::pair<float, float>>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flMaxSpeed"_hash ) );
-		const auto inaccuracy_move_pair   = g::memory.read<std::pair<float, float>>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyMove"_hash ) );
-		const auto inaccuracy_jump_initial = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyJumpInitial"_hash ) );
-		const auto inaccuracy_jump_apex    = g::memory.read<float>( weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyJumpApex"_hash ) );
+		// Campos de vdata — extraídos do batch (0 syscalls adicionais).
+		const auto max_speed_pair          = vdata_batch.get<std::pair<float, float>>( SCHEMA( "CCSWeaponBaseVData", "m_flMaxSpeed"_hash ) );
+		const auto inaccuracy_move_pair    = vdata_batch.get<std::pair<float, float>>( SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyMove"_hash ) );
+		const auto inaccuracy_jump_initial = vdata_batch.get<float>( SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyJumpInitial"_hash ) );
+		const auto inaccuracy_jump_apex    = vdata_batch.get<float>( SCHEMA( "CCSWeaponBaseVData", "m_flInaccuracyJumpApex"_hash ) );
 
-		const auto max_speed      = detail_inaccuracy::select_mode( max_speed_pair, fire_mode );
+		const auto max_speed       = detail_inaccuracy::select_mode( max_speed_pair,       fire_mode );
 		const auto inaccuracy_move = detail_inaccuracy::select_mode( inaccuracy_move_pair, fire_mode );
 
+		// Campos do pawn — lidos individualmente (pawn não tem batch aqui;
+		// velocity + flags + is_walking são usados apenas para inaccuracy,
+		// e o batch do pawn de 0x1400 bytes é feito no collector, não aqui).
 		const auto player_velocity = g::memory.read<math::vector3>( pawn + SCHEMA( "C_BaseEntity", "m_vecVelocity"_hash ) );
-		const auto speed = player_velocity.length_2d( );
-		const auto flags = g::memory.read<std::uint32_t>( pawn + SCHEMA( "C_BaseEntity", "m_fFlags"_hash ) );
-		const auto is_walking = g::memory.read<bool>( pawn + SCHEMA( "C_CSPlayerPawn", "m_bIsWalking"_hash ) );
-		const auto on_ground  = ( flags & 1 ) != 0;
+		const auto speed           = player_velocity.length_2d( );
+		const auto flags           = g::memory.read<std::uint32_t>( pawn + SCHEMA( "C_BaseEntity", "m_fFlags"_hash ) );
+		const auto is_walking      = g::memory.read<bool>( pawn + SCHEMA( "C_CSPlayerPawn", "m_bIsWalking"_hash ) );
+		const auto on_ground       = ( flags & 1 ) != 0;
 
 		const auto edge0 = max_speed * 0.34f;
 		const auto edge1 = max_speed * 0.95f;
 
 		auto move_inaccuracy = 0.0f;
-		auto move_factor = detail_inaccuracy::compute_move_factor( speed, edge0, edge1 );
+		auto move_factor     = detail_inaccuracy::compute_move_factor( speed, edge0, edge1 );
 
 		if ( move_factor > 0.0f )
 		{

@@ -35,12 +35,10 @@ void bomb_timer::tick( )
 		return;
 	}
 
-	// Ler current_time de GlobalVars.
-	// FIX: cs2::global_vars_cur_time não está definido no codebase mostrado.
-	// Usando +0x30 diretamente — mesmo offset usado no resto do projeto.
-	const auto global_vars = g::memory.read<std::uintptr_t>( g::offsets.global_vars );
-	if ( !global_vars ) return;
-	const float current_time = g::memory.read<float>( global_vars + cs2::global_vars_cur_time );
+	// Usa current_time do contexto compartilhado — evita 2 leituras de memória
+	// extra (global_vars ptr + float) por tick que shared::tick() já fez.
+	const float current_time = features::combat::g_shared.ctx( ).current_time;
+	if ( current_time <= 0.f ) return; // shared ainda não inicializou
 
 	// FIX: -0x8 é o offset do campo m_bIsPlanted dentro da entidade C_PlantedC4.
 	// Este campo não aparece no schema do CS2 (não é um campo de rede declarado),
@@ -59,35 +57,78 @@ void bomb_timer::tick( )
 	m_info.planted = true;
 	m_anim_alpha   = std::min( 1.f, m_anim_alpha + 0.05f );
 
-	// ─── Ler campos da C4 via SCHEMA ───────────────────────────────────────
-	// FIX: offsets_map::get() retorna endereços globais (result de pattern scan).
-	// Campos de struct são offsets SCHEMA — categorias diferentes.
-	// offsets_map::get("m_flC4Blow") retorna 0 ou endereço errado → timer quebrado.
-	// SCHEMA("C_PlantedC4", "m_flC4Blow"_hash) retorna o offset correto dentro da struct.
+	// ─── Batch read da C4 — 1 syscall em vez de 5+ ────────────────────────
+	// read_batch_fixed<0x200>: buffer inline de 512 bytes, zero heap allocation.
+	// Cobre todos os campos relevantes da C_PlantedC4 num único ReadProcessMemory.
+	const auto c4_batch = g::memory.read_batch_fixed<0x200>( planted_c4 );
+	if ( !c4_batch.valid )
+	{
+		m_info.planted = false;
+		return;
+	}
 
-	const float blow_time     = g::memory.read<float>( planted_c4 + SCHEMA( "C_PlantedC4", "m_flC4Blow"_hash ) );
-	const float defuse_time   = g::memory.read<float>( planted_c4 + SCHEMA( "C_PlantedC4", "m_flDefuseCountDown"_hash ) );
-	const bool  being_defused = g::memory.read<bool> ( planted_c4 + SCHEMA( "C_PlantedC4", "m_bBeingDefused"_hash ) );
-	const bool  defused       = g::memory.read<bool> ( planted_c4 + SCHEMA( "C_PlantedC4", "m_bBombDefused"_hash ) );
-	const int   site          = g::memory.read<int>  ( planted_c4 + SCHEMA( "C_PlantedC4", "m_nBombSite"_hash ) );
+	const float blow_time     = c4_batch.get<float>( SCHEMA( "C_PlantedC4", "m_flC4Blow"_hash ) );
+	const float defuse_time   = c4_batch.get<float>( SCHEMA( "C_PlantedC4", "m_flDefuseCountDown"_hash ) );
+	const bool  being_defused = c4_batch.get<bool> ( SCHEMA( "C_PlantedC4", "m_bBeingDefused"_hash ) );
+	const bool  defused       = c4_batch.get<bool> ( SCHEMA( "C_PlantedC4", "m_bBombDefused"_hash ) );
+	const int   site          = c4_batch.get<int>  ( SCHEMA( "C_PlantedC4", "m_nBombSite"_hash ) );
 
 	m_info.time_left   = std::max( 0.f, blow_time   - current_time );
-	m_info.defuse_left = being_defused ? std::max( 0.f, defuse_time - current_time ) : 0.f;
+	// FIX: verificar também que defuse_time > current_time para evitar valor stale
+	// de um defuse anterior cancelado (campo de memória mantém valor residual).
+	const bool defuse_valid = being_defused && ( defuse_time > current_time );
+	m_info.defuse_left = defuse_valid ? ( defuse_time - current_time ) : 0.f;
 	m_info.defusing    = being_defused;
 	m_info.defused     = defused;
 	m_info.site        = site;
 
-	// Dano estimado: a C4 causa ~500HP no epicentro e decai com o raio de blast.
-	// Raio letal completo ≈ 500 unidades (damage cai linearmente).
-	// Sem posição do jogador local disponível aqui — exibimos o dano máximo possível
-	// como indicador de urgência. Se a bomba já explodiu, dano = 0.
-	m_info.damage = ( m_info.time_left > 0.f ) ? 500 : 0;
+	// Dano real da bomba baseado em distância.
+	// Fórmula de blast damage do CS2:
+	//   - Dano máximo no epicentro: ~500 HP
+	//   - Decaimento linear até 0 no raio letal (~500 unidades)
+	//   - Abaixo de 100u o dano é sempre letal (cap a 500)
+	// Fonte: análise empírica + CS2 game_trace / blast_radius behavior.
+	if ( m_info.time_left > 0.f )
+	{
+		const auto local_pawn = systems::g_local.pawn( );
+		if ( local_pawn )
+		{
+			// m_vecOrigin já está no batch — sem read extra
+			const auto c4_origin = c4_batch.get<math::vector3>(
+				SCHEMA( "C_PlantedC4", "m_vecOrigin"_hash )
+			);
+			const auto local_origin = g::memory.read<math::vector3>(
+				local_pawn + SCHEMA( "C_BaseEntity", "m_vecAbsOrigin"_hash )
+			);
+			const float dist = ( local_origin - c4_origin ).length( );
+
+			constexpr float k_max_dmg    = 500.f;
+			constexpr float k_blast_rad  = 500.f; // unidades world
+			constexpr float k_inner_rad  = 100.f; // zona de dano máximo
+
+			float dmg;
+			if      ( dist <= k_inner_rad ) dmg = k_max_dmg;
+			else if ( dist >= k_blast_rad ) dmg = 0.f;
+			else dmg = k_max_dmg * ( 1.f - ( dist - k_inner_rad ) / ( k_blast_rad - k_inner_rad ) );
+
+			m_info.damage = static_cast<int>( dmg );
+		}
+		else
+		{
+			// Sem pawn disponível — exibimos o máximo como fallback
+			m_info.damage = 500;
+		}
+	}
+	else
+	{
+		m_info.damage = 0;
+	}
 
 	// ─── Nome do defuser ───────────────────────────────────────────────────
 	if ( being_defused )
 	{
-		const auto defuser_handle = g::memory.read<std::uint32_t>(
-			planted_c4 + SCHEMA( "C_PlantedC4", "m_hBombDefuser"_hash )
+		const auto defuser_handle = c4_batch.get<std::uint32_t>(
+			SCHEMA( "C_PlantedC4", "m_hBombDefuser"_hash )
 		);
 
 		if ( defuser_handle && defuser_handle != 0xFFFFFFFF )
@@ -125,8 +166,8 @@ void bomb_timer::on_render( zdraw::draw_list& draw_list )
 	if ( !m_info.planted )                        return;
 
 	const auto display = zdraw::get_display_size( );
-	const float x = 12.f;
-	const float y = display.second * 0.35f;
+	const float x = settings::g_misc.m_bombtimer.pos_x.value;
+	const float y = display.second * settings::g_misc.m_bombtimer.pos_y_frac.value;
 
 	const float panel_w  = 220.f;
 	const float panel_h  = m_info.defused ? 45.f : ( m_info.defusing ? 115.f : 75.f );

@@ -5,9 +5,16 @@ class render
 public:
 	struct loaded_fonts
 	{
+		// zdraw fonts (overlay ESP)
 		zdraw::font* mochi_12{};
 		zdraw::font* pretzel_12{};
 		zdraw::font* pixel7_10{};
+
+		// ImGui fonts (menu)
+		ImFont* imgui_inter_regular{};
+		ImFont* imgui_inter_medium{};
+		ImFont* imgui_inter_bold{};
+		ImFont* imgui_fa_solid{};
 	};
 
 	bool initialize( );
@@ -20,6 +27,8 @@ private:
 	void run( );
 	void update_input_window( );
 	bool setup_d3d( );
+	bool setup_imgui( );
+	void shutdown_imgui( );
 	bool register_window_class( );
 
 	static LRESULT CALLBACK wnd_proc( HWND hwnd, UINT msg, WPARAM wp, LPARAM lp );
@@ -29,10 +38,10 @@ private:
 	ATOM m_atom{};
 	bool m_was_open{};
 
-	ID3D11Device* m_device{};
-	ID3D11DeviceContext* m_context{};
-	IDXGISwapChain* m_swap_chain{};
-	ID3D11RenderTargetView* m_rtv{};
+	ID3D11Device*            m_device{};
+	ID3D11DeviceContext*     m_context{};
+	IDXGISwapChain*          m_swap_chain{};
+	ID3D11RenderTargetView*  m_rtv{};
 
 	loaded_fonts m_fonts{};
 	timing::limiter m_fps_limiter{ 240 };

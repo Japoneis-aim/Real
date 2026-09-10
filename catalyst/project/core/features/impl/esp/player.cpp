@@ -10,25 +10,21 @@ namespace features::esp {
 			return;
 		}
 
-		// current_time já é lido pelo shared::tick() no thread de combat — reusar em vez de
-		// fazer outra chamada ReadProcessMemory aqui no render thread.
+		// Obtém current_time do contexto compartilhado — evita leitura extra de memória
+		// e elimina o offset 0x30 hardcoded que é frágil a atualizações do CS2.
 		const auto current_time = features::combat::g_shared.ctx( ).current_time;
-		if ( current_time == 0.0f )
-		{
-			// shared ainda não inicializado (primeiro frame) — pula
-			return;
-		}
 
-		systems::g_collector.with_players( [&]( const std::vector<systems::collector::player>& players_list )
+		systems::g_collector.with_players( [&]( const std::vector<systems::collector::player>& players )
 		{
-		for ( const auto& player : players_list )
+		for ( const auto& player : players )
 		{
 			if ( !systems::g_local.is_enemy( player.team ) )
 			{
 				continue;
 			}
 
-			// Usa bones já cacheados pelo collector — evita segunda leitura de memória
+			// Usa cached_bones do collector — já lidos e validados no thread de game.
+			// Evita re-leitura de ~4 KB de memória externa por jogador a cada frame de render.
 			const auto& bones = player.cached_bones;
 			if ( !bones.is_valid( ) )
 			{
@@ -83,6 +79,22 @@ namespace features::esp {
 				this->add_flags( draw_list, bounds, player, cfg.m_info_flags, offsets );
 			}
 		}
+
+		// Limpar entradas de animation_data para controllers que não estão mais no vetor.
+		// Só executa quando o mapa tem mais entradas do que jogadores ativos — evita
+		// criar um unordered_set a cada frame (custo de ~N allocs por frame quando N > 0).
+		if ( this->m_animations.size( ) > players.size( ) )
+		{
+			for ( auto it = this->m_animations.begin( ); it != this->m_animations.end( ); )
+			{
+				bool found = false;
+				for ( const auto& p : players )
+				{
+					if ( p.controller == it->first ) { found = true; break; }
+				}
+				it = found ? std::next( it ) : this->m_animations.erase( it );
+			}
+		}
 		} ); // with_players
 	}
 
@@ -114,20 +126,31 @@ namespace features::esp {
 			const auto edge_color = zdraw::rgba( static_cast< std::uint8_t >( edge_r * 255 ), static_cast< std::uint8_t >( edge_g * 255 ), static_cast< std::uint8_t >( edge_b * 255 ), static_cast< std::uint8_t >( 255 * edge_alpha ) );
 			const auto center_color = zdraw::rgba( static_cast< std::uint8_t >( edge_r * 255 * center_brightness ), static_cast< std::uint8_t >( edge_g * 255 * center_brightness ), static_cast< std::uint8_t >( edge_b * 255 * center_brightness ), static_cast< std::uint8_t >( 255 * center_alpha ) );
 
-			const auto mid_y = y + h * 0.5f;
-			draw_list.add_rect_filled_multi_color( x + 1, y + 1, w - 2, mid_y - y - 1, edge_color, edge_color, center_color, center_color );
-			draw_list.add_rect_filled_multi_color( x + 1, mid_y, w - 2, y + h - mid_y - 1, center_color, center_color, edge_color, edge_color );
+			// Fill alinhado exatamente com o interior da box (1px de inset só para não cobrir a borda)
+			const auto fx = x + 1;
+			const auto fy = y + 1;
+			const auto fw = w - 2;
+			const auto fh = h - 2;
+			const auto mid_y = fy + fh * 0.5f;
+			draw_list.add_rect_filled_multi_color( fx, fy,         fw, mid_y - fy, edge_color, edge_color, center_color, center_color );
+			draw_list.add_rect_filled_multi_color( fx, mid_y, fw, fy + fh - mid_y, center_color, center_color, edge_color, edge_color );
 		}
 
 		if ( cfg.style == settings::esp::player::box::style_type::full )
 		{
 			if ( cfg.outline )
 			{
-				draw_list.add_rect( x - 1, y - 1, w + 2, h + 2, zdraw::rgba( 0, 0, 0, 180 ), 1.0f );
-				draw_list.add_rect( x, y, w, h, zdraw::rgba( 0, 0, 0, 200 ), 2.0f );
+				// Outline externo: sombra de 1px ao redor da borda colorida
+				draw_list.add_rect( x - 1, y - 1, w + 2, h + 2, zdraw::rgba( 0, 0, 0, 160 ), 1.0f );
 			}
 
 			draw_list.add_rect( x, y, w, h, color, 1.0f );
+
+			if ( cfg.outline )
+			{
+				// Outline interno: sombra de 1px dentro da borda colorida
+				draw_list.add_rect( x + 1, y + 1, w - 2, h - 2, zdraw::rgba( 0, 0, 0, 120 ), 1.0f );
+			}
 		}
 		else
 		{
@@ -135,11 +158,15 @@ namespace features::esp {
 
 			if ( cfg.outline )
 			{
-				draw_list.add_rect_cornered( x - 1, y - 1, w + 2, h + 2, zdraw::rgba( 0, 0, 0, 180 ), corner + 1, 1.0f );
-				draw_list.add_rect_cornered( x, y, w, h, zdraw::rgba( 0, 0, 0, 200 ), corner, 2.0f );
+				draw_list.add_rect_cornered( x - 1, y - 1, w + 2, h + 2, zdraw::rgba( 0, 0, 0, 160 ), corner + 1, 1.0f );
 			}
 
 			draw_list.add_rect_cornered( x, y, w, h, color, corner, 1.0f );
+
+			if ( cfg.outline )
+			{
+				draw_list.add_rect_cornered( x + 1, y + 1, w - 2, h - 2, zdraw::rgba( 0, 0, 0, 120 ), corner - 1, 1.0f );
+			}
 		}
 	}
 
@@ -201,10 +228,7 @@ namespace features::esp {
 		const auto hp = std::clamp( player.health / 100.0f, 0.0f, 1.0f );
 		const auto flash_t = std::clamp( 1.0f - ( current_time - anim.last_damage_time ) * 2.5f, 0.0f, 1.0f );
 
-		// thread_local static: reutiliza a memória já alocada entre frames — evita
-		// pressão no alocador com vários inimigos na tela.
-		thread_local static std::vector<std::vector<poly2d::point>> pills;
-		pills.clear( );
+		std::vector<std::vector<poly2d::point>> pills;
 
 		for ( const auto& hb : player.hitboxes )
 		{
@@ -312,9 +336,7 @@ namespace features::esp {
 					const auto red = zdraw::rgba{ 220, 40, 40, flash_alpha };
 					const auto tris = poly2d::triangulate( outline );
 
-					// thread_local static: reutiliza buffer entre frames
-					thread_local static std::vector<float> clipped;
-					clipped.clear( );
+					std::vector<float> clipped;
 					clipped.reserve( tris.size( ) * 2 );
 
 					auto clip_triangle_above = [ & ]( float x0, float y0, float x1, float y1, float x2, float y2 )
@@ -384,9 +406,7 @@ namespace features::esp {
 
 			if ( cfg.outline )
 			{
-				// thread_local static: reutiliza buffer entre frames
-				thread_local static std::vector<float> flat;
-				flat.clear( );
+				std::vector<float> flat;
 				flat.reserve( outline.size( ) * 2 );
 
 				for ( const auto& p : outline )
@@ -425,7 +445,7 @@ namespace features::esp {
 		const auto outline_size = cfg.outline ? 1.0f : 0.0f;
 		const auto vertical = cfg.position == settings::esp::player::health_bar::position_type::left;
 
-		const auto bar_w = vertical ? bar_size : std::floorf( bounds.width( ) );
+		const auto bar_w = vertical ? bar_size : std::floorf( bounds.width( ) - outline_size * 2.0f );
 		const auto bar_h = vertical ? std::floorf( bounds.height( ) ) : bar_size;
 		const auto filled = std::floorf( ( vertical ? bar_h : bar_w ) * fraction );
 
@@ -436,7 +456,8 @@ namespace features::esp {
 					return std::floorf( bounds.min.x - bar_size - padding - offsets.left - outline_size );
 				}
 
-				return std::floorf( bounds.min.x );
+				// top/bottom: alinha com a borda esquerda da box, compensando outline
+				return std::floorf( bounds.min.x + outline_size );
 			}( );
 
 		const auto y = [ & ]( )
@@ -529,7 +550,7 @@ namespace features::esp {
 		const auto outline_size = cfg.outline ? 1.0f : 0.0f;
 		const auto vertical = cfg.position == settings::esp::player::ammo_bar::position_type::left;
 
-		const auto bar_w = vertical ? bar_size : std::floorf( bounds.width( ) );
+		const auto bar_w = vertical ? bar_size : std::floorf( bounds.width( ) - outline_size * 2.0f );
 		const auto bar_h = vertical ? std::floorf( bounds.height( ) ) : bar_size;
 		const auto filled = std::floorf( ( vertical ? bar_h : bar_w ) * fraction );
 
@@ -540,7 +561,7 @@ namespace features::esp {
 					return std::floorf( bounds.min.x - bar_size - padding - offsets.left - outline_size );
 				}
 
-				return std::floorf( bounds.min.x );
+				return std::floorf( bounds.min.x + outline_size );
 			}( );
 
 		const auto y = [ & ]( )
@@ -614,12 +635,27 @@ namespace features::esp {
 
 		const auto [text_w, text_h] = zdraw::measure_text( player.display_name );
 		const auto text_x = std::floorf( bounds.min.x + ( bounds.width( ) * 0.5f ) - ( text_w * 0.5f ) );
-		const auto text_y = std::floorf( bounds.min.y - text_h - 2.0f - offsets.top );
+		// Gap de 4px entre o topo da box (ou elemento anterior) e o nome
+		const auto text_y = std::floorf( bounds.min.y - text_h - 4.0f - offsets.top );
 
 		draw_list.add_text( text_x, text_y, player.display_name, nullptr, cfg.color, zdraw::text_style::outlined );
 		zdraw::pop_font( );
 
-		offsets.top += text_h + 2.0f;
+		offsets.top += text_h + 4.0f;
+	}
+
+	static void draw_icon_outlined(
+		zdraw::draw_list& draw_list,
+		float x, float y, float w, float h,
+		ID3D11ShaderResourceView* texture,
+		const zdraw::rgba& color )
+	{
+		constexpr auto outline = zdraw::rgba{ 0, 0, 0, 255 };
+		draw_list.add_rect_textured( x - 1.0f, y,       w, h, texture, 0.0f, 0.0f, 1.0f, 1.0f, outline );
+		draw_list.add_rect_textured( x + 1.0f, y,       w, h, texture, 0.0f, 0.0f, 1.0f, 1.0f, outline );
+		draw_list.add_rect_textured( x,       y - 1.0f, w, h, texture, 0.0f, 0.0f, 1.0f, 1.0f, outline );
+		draw_list.add_rect_textured( x,       y + 1.0f, w, h, texture, 0.0f, 0.0f, 1.0f, 1.0f, outline );
+		draw_list.add_rect_textured( x,       y,        w, h, texture, 0.0f, 0.0f, 1.0f, 1.0f, color );
 	}
 
 	void player::add_weapon( zdraw::draw_list& draw_list, const systems::bounds::data& bounds, const systems::collector::player& player, const settings::esp::player::weapon& cfg, draw_offsets& offsets )
@@ -637,13 +673,8 @@ namespace features::esp {
 				const auto target_w = ico->height > 0 ? target_h * static_cast< float >( ico->width ) / static_cast< float >( ico->height ) : target_h;
 				const auto icon_x = std::floorf( bounds.min.x + ( bounds.width( ) * 0.5f ) - ( target_w * 0.5f ) );
 				const auto icon_y = std::floorf( bounds.max.y + 2.0f + offsets.bottom + total_height );
-				constexpr auto outline = zdraw::rgba{ 0, 0, 0, 255 };
 
-				draw_list.add_rect_textured( icon_x - 1.0f, icon_y, target_w, target_h, ico->texture.Get( ), 0.0f, 0.0f, 1.0f, 1.0f, outline );
-				draw_list.add_rect_textured( icon_x + 1.0f, icon_y, target_w, target_h, ico->texture.Get( ), 0.0f, 0.0f, 1.0f, 1.0f, outline );
-				draw_list.add_rect_textured( icon_x, icon_y - 1.0f, target_w, target_h, ico->texture.Get( ), 0.0f, 0.0f, 1.0f, 1.0f, outline );
-				draw_list.add_rect_textured( icon_x, icon_y + 1.0f, target_w, target_h, ico->texture.Get( ), 0.0f, 0.0f, 1.0f, 1.0f, outline );
-				draw_list.add_rect_textured( icon_x, icon_y, target_w, target_h, ico->texture.Get( ), 0.0f, 0.0f, 1.0f, 1.0f, cfg.icon_color );
+				draw_icon_outlined( draw_list, icon_x, icon_y, target_w, target_h, ico->texture.Get( ), cfg.icon_color );
 
 				total_height += target_h + 2.0f;
 			}
@@ -732,34 +763,40 @@ namespace features::esp {
 
 		zdraw::pop_font( );
 
-		offsets.right += max_w + 4.0f;
-
-		// Look direction: linha da cabeça na direção do eyeAngles do inimigo (~60 units)
-		if ( cfg.look_dir && player.cached_bones.is_valid( ) )
+		// Look direction arrow: desenha uma linha 2D a partir do centro do topo da box
+		// na direção do olhar (m_angEyeAngles.y projetado na tela).
+		if ( cfg.look_dir )
 		{
-			// Posição da cabeça (bone 6 = head no CS2)
-			const auto head_world = player.cached_bones.get_position( 6 );
-			if ( head_world.length_sqr( ) > 1.0f )
-			{
-				const float pitch = math::helpers::deg_to_rad( player.eye_angles.x );
-				const float yaw   = math::helpers::deg_to_rad( player.eye_angles.y );
-				const float cp    = std::cosf( pitch );
-				const float sp    = std::sinf( pitch );
-				const float cy    = std::cosf( yaw );
-				const float sy    = std::sinf( yaw );
+			// Converte yaw do eye_angles para direção 2D na tela.
+			// O yaw 0° aponta para o Norte do mapa (+X no CS2).
+			// Na tela, projetamos +X world → screen para obter a direção correta.
+			const auto yaw_rad = math::helpers::deg_to_rad( player.eye_angles.y );
+			const float dir_x =  std::cosf( yaw_rad );
+			const float dir_y = -std::sinf( yaw_rad );  // -Y porque tela Y cresce para baixo
 
-				const math::vector3 dir{ cp * cy, cp * sy, -sp };
-				const math::vector3 end_world = head_world + dir * 60.0f;
+			// Origem: centro do topo da bounding box
+			const float orig_x = bounds.min.x + bounds.width( ) * 0.5f;
+			const float orig_y = bounds.min.y - offsets.top - 2.0f;
 
-				const auto s1 = systems::g_view.project( head_world );
-				const auto s2 = systems::g_view.project( end_world );
+			constexpr float arrow_len = 14.0f;
+			const float tip_x = orig_x + dir_x * arrow_len;
+			const float tip_y = orig_y + dir_y * arrow_len;
 
-				if ( systems::g_view.projection_valid( s1 ) && systems::g_view.projection_valid( s2 ) )
-				{
-					draw_list.add_line( s1.x, s1.y, s2.x, s2.y, cfg.look_dir_color, 1.2f );
-				}
-			}
+			draw_list.add_line( orig_x, orig_y, tip_x, tip_y, cfg.look_dir_color, 1.5f );
+
+			// Pontinha da seta: dois braços de 5px a ±30° do vetor inverso
+			constexpr float cos30 = 0.866f, sin30 = 0.5f;
+			const float inv_x = -dir_x, inv_y = -dir_y;
+			const float barb1_x = tip_x + ( inv_x * cos30 - inv_y * sin30 ) * 5.0f;
+			const float barb1_y = tip_y + ( inv_x * sin30 + inv_y * cos30 ) * 5.0f;
+			const float barb2_x = tip_x + ( inv_x * cos30 + inv_y * sin30 ) * 5.0f;
+			const float barb2_y = tip_y + ( -inv_x * sin30 + inv_y * cos30 ) * 5.0f;
+
+			draw_list.add_line( tip_x, tip_y, barb1_x, barb1_y, cfg.look_dir_color, 1.5f );
+			draw_list.add_line( tip_x, tip_y, barb2_x, barb2_y, cfg.look_dir_color, 1.5f );
 		}
+
+		offsets.right += max_w + 4.0f;
 	}
 
 } // namespace features::esp

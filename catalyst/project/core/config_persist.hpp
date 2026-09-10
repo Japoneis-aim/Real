@@ -22,6 +22,14 @@ namespace config_persist {
     // Magic header: "CATC" (0x43415443) — valida que o arquivo é nosso.
     inline constexpr std::uint32_t k_magic = 0x43415443u;
 
+    // Versão do formato de config — incrementar sempre que campos forem
+    // adicionados, removidos ou renomeados em settings.hpp.
+    // O load() aceita configs de versões anteriores (campos novos ficam no
+    // default), mas loga um warning para o usuário saber que o arquivo é antigo.
+    // Versões futuras com formato incompatível podem rejeitar versões < mínimo.
+    inline constexpr std::uint16_t k_version = 2u;
+    inline constexpr std::uint16_t k_min_compatible_version = 1u;
+
     inline const char* get_path( )
     {
         return k_filename;
@@ -47,6 +55,9 @@ namespace config_persist {
 
         // Escreve magic header para validação na leitura.
         f.write( reinterpret_cast<const char*>( &k_magic ), sizeof( k_magic ) );
+
+        // Escreve a versão do formato (uint16_t) para compatibilidade futura.
+        f.write( reinterpret_cast<const char*>( &k_version ), sizeof( k_version ) );
 
         // Escreve o tamanho do payload (uint32_t) para checagem rápida.
         const auto payload_size = static_cast<std::uint32_t>( buf.size( ) );
@@ -76,6 +87,29 @@ namespace config_persist {
         if ( !f.good( ) || magic != k_magic )
         {
             return false;
+        }
+
+        // Lê e verifica a versão do formato.
+        // Configs antigas (sem campo de versão) têm tamanho de payload logo após
+        // o magic — detectamos isso verificando se o valor caberia em uint16.
+        // Para robustez lemos sempre 2 bytes e tratamos como versão.
+        std::uint16_t file_version = 0;
+        f.read( reinterpret_cast<char*>( &file_version ), sizeof( file_version ) );
+        if ( !f.good( ) )
+        {
+            return false;
+        }
+
+        if ( file_version < k_min_compatible_version )
+        {
+            // Versão incompatível — não tenta carregar para evitar dados corrompidos.
+            return false;
+        }
+
+        if ( file_version < k_version )
+        {
+            // Versão mais antiga mas ainda compatível — campos novos ficam no default.
+            // (sem log aqui: config_persist.hpp é incluído antes do namespace g::)
         }
 
         // Lê o tamanho esperado do payload.

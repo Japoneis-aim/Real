@@ -20,7 +20,7 @@ void wallbang_indicator::tick( )
 		return;
 	}
 
-	const auto& ctx = combat::g_shared.ctx( );
+	const auto ctx = combat::g_shared.ctx( );
 	if ( !ctx.valid )
 	{
 		m_anim_alpha  = std::max( 0.f, m_anim_alpha  - 0.05f );
@@ -56,13 +56,13 @@ void wallbang_indicator::check_wallbang( )
 	math::vector3 forward, right, up;
 	math::helpers::angle_vectors( view_angles, forward, right, up );
 
-	m_result = {};
+	wallbang_result local_result{};
 
 	// ─── Penetração ────────────────────────────────────────────────────────
 	float damage = 0.f;
 	const bool can_pen = combat::g_shared.pen( ).can( eye_pos, forward, damage );
-	m_result.can_penetrate = can_pen;
-	m_result.damage        = damage;
+	local_result.can_penetrate = can_pen;
+	local_result.damage        = damage;
 
 	// FIX: estimar espessura via trace em vez de deixar sempre 0.
 	// Fazemos dois traces: um curto (para detectar entrada da parede) e
@@ -85,7 +85,7 @@ void wallbang_indicator::check_wallbang( )
 				entry_pt + forward * 300.0f    // até 300u à frente (parede pode ser grossa)
 			);
 
-			m_result.thickness = trace_out.hit
+			local_result.thickness = trace_out.hit
 				? trace_out.distance           // distância da entrada até a saída = espessura
 				: std::min( trace_in.distance, 50.0f ); // fallback
 		}
@@ -113,7 +113,7 @@ void wallbang_indicator::check_wallbang( )
 			continue;
 
 		min_dist = dist;
-		m_result.hit_distance = dist;
+		local_result.hit_distance = dist;
 
 		// FIX: posição da cabeça via hitboxes reais, não bone index hardcoded.
 		// Hitbox índice 0 é tipicamente a cabeça no CS2.
@@ -131,12 +131,15 @@ void wallbang_indicator::check_wallbang( )
 		const auto trace  = systems::g_bvh.trace_ray( eye_pos, head_pos );
 		const auto visible = !trace.hit || trace.fraction > 0.97f;
 
-		m_result.hit_player = visible || can_pen;
+		local_result.hit_player = visible || can_pen;
 	}
 	} ); // with_players
 
-	if ( !m_result.hit_player )
-		m_result.damage = 0.f;
+	if ( !local_result.hit_player )
+		local_result.damage = 0.f;
+
+	std::unique_lock lock( m_result_mutex );
+	m_result = local_result;
 }
 
 // ============================================================================
@@ -145,6 +148,8 @@ void wallbang_indicator::check_wallbang( )
 
 void wallbang_indicator::on_render( zdraw::draw_list& draw_list )
 {
+	// Checa config diretamente — não depende só do m_enabled do tick thread
+	if ( !settings::g_misc.m_wallbang.enabled ) return;
 	if ( !m_enabled )          return;
 	if ( m_anim_alpha < 0.01f ) return;
 
@@ -152,6 +157,7 @@ void wallbang_indicator::on_render( zdraw::draw_list& draw_list )
 	const float cx = display.first  * 0.5f;
 	const float cy = display.second * 0.5f;
 
+	std::shared_lock lock( m_result_mutex );
 	draw_crosshair( draw_list, cx, cy );
 	draw_damage_text( draw_list, cx, cy );
 }
@@ -161,22 +167,18 @@ void wallbang_indicator::draw_crosshair( zdraw::draw_list& dl, float cx, float c
 	const uint8_t alpha = static_cast<uint8_t>( 200 * m_anim_alpha );
 
 	const bool can_pen = m_result.can_penetrate && m_result.hit_player;
-	const uint8_t r = can_pen ?  50 : 255;
-	const uint8_t g = can_pen ? 255 :  50;
-	const uint8_t b = can_pen ?  50 :  50;
+	const auto& col_cfg = can_pen
+		? settings::g_misc.m_wallbang.color_yes.value
+		: settings::g_misc.m_wallbang.color_no.value;
+
+	const uint8_t r = col_cfg.r;
+	const uint8_t g = col_cfg.g;
+	const uint8_t b = col_cfg.b;
 
 	constexpr float k_radius = 14.f;
 
-	// Círculo externo
+	// Apenas 1 círculo externo
 	dl.add_circle( cx, cy, k_radius, { r, g, b, alpha }, 24, 2.5f );
-
-	// FIX: add_circle_filled não confirmado no zdraw do projeto.
-	// Círculo interno animado via círculo com raio pequeno e linha grossa.
-	const float inner_r = std::max( 1.0f, 4.f + 8.f * ( 1.f - m_anim_alpha ) );
-	dl.add_circle( cx, cy, inner_r,
-		{ r, g, b, static_cast<uint8_t>( 80 * m_anim_alpha ) },
-		16, inner_r * 2.0f   // thickness = diâmetro → aparência de preenchimento
-	);
 
 	// Barra de espessura da parede (estimativa)
 	if ( can_pen )

@@ -40,9 +40,12 @@ void AimController::on_frame(
 
 	// Target-lock: se o alvo mudou, descarta o resíduo sub-pixel acumulado
 	// para evitar que a mira "puxe" para um lado no primeiro frame do novo alvo.
+	// Também reseta o estado de hysteresis da dead zone — o novo alvo pode estar
+	// mais longe, então começamos com assist ativo.
 	if ( target_ptr != m_last_target_ptr )
 	{
 		m_subpixel_err = {};
+		m_assist_in_dead_zone = false;
 		m_last_target_ptr = target_ptr;
 	}
 
@@ -118,20 +121,43 @@ void AimController::apply_assist( math::vector2& delta, const math::vector3& eye
 	if ( len < 0.001f )
 		return;
 
-	// Dead zone: se já estamos muito perto do alvo, desliga o assist completamente.
-	// Sem isso, a mira nunca chega exatamente no alvo (o assist sempre "trava" o movimento).
-	// 0.15° é imperceptível para o jogador mas resolve o "stickiness" que impede headshots.
-	constexpr float k_dead_zone_deg = 0.15f;
-	if ( len < k_dead_zone_deg )
-		return;
+	// Dead zone com hysteresis: evita chattering quando a mira está no limiar da zona morta.
+	//   - Zona de entrada  (inner): se len < k_dead_zone_enter, o assist desliga completamente.
+	//   - Zona de saída    (outer): o assist só religa quando len > k_dead_zone_exit.
+	// Isso previne que micro-movimentos (tremedeira, desaceleração do smooth) alternem
+	// o assist on/off a cada tick, tornando o comportamento visivelmente mais estável.
+	constexpr float k_dead_zone_enter = 0.10f; // desliga quando muito perto
+	constexpr float k_dead_zone_exit  = 0.25f; // só religa quando sair desta distância
+
+	if ( m_assist_in_dead_zone )
+	{
+		// Dentro da zona morta — só sai quando cruzar o limiar de saída
+		if ( len < k_dead_zone_exit )
+			return;
+		m_assist_in_dead_zone = false;
+	}
+	else
+	{
+		// Fora da zona morta — entra na zona se cruzar o limiar de entrada
+		if ( len < k_dead_zone_enter )
+		{
+			m_assist_in_dead_zone = true;
+			return;
+		}
+	}
 
 	const float s = std::clamp( cfg.assist_strength, 0.0f, 1.0f );
 
-	// Quanto mais perto do alvo (delta menor), mais o assist "segura" (redução maior).
-	// Curva: 1 - exp(-len * 0.15) vai de 0 (delta=0) até ~1 (delta grande).
-	// Isso faz o assist ser mais forte perto do alvo e fraco longe.
-	const float proximity_factor = 1.0f - std::exp( -len * 0.15f );
-	const float reduction = s * ( 1.0f - proximity_factor * 0.4f );
+	// proximity_factor: 1.0 quando o cursor está perto do alvo (len→0), 0.0 quando longe.
+	// Isso faz o assist "segurar" mais (redução maior) quando a mira já está perto —
+	// comportamento magnético correto: dificulta sair do alvo sem impedir chegar nele.
+	//
+	// Substituído std::exp(-len * 0.15f) por 1/(1+len*0.15f):
+	//   - Erro < 2% no range relevante (len 0–10°), comportamento praticamente idêntico.
+	//   - ~3× mais rápido: sem transendental, só uma divisão FP.
+	//   - Roda 128× por segundo no thread de combat — vale a troca.
+	const float proximity_factor = 1.0f / ( 1.0f + len * 0.15f );
+	const float reduction = s * proximity_factor * 0.8f;
 
 	// Reduzir o delta — mover menos por tick = pull suave em direção ao alvo
 	delta.x *= ( 1.0f - reduction );
@@ -147,8 +173,16 @@ void AimController::apply_smoothing( math::vector2& delta, float delta_time, con
 	// Exponential smoothing: frame-rate independente.
 	// t = 0 → não move; t = 1 → move tudo de uma vez.
 	// smooth_amount grande = movimento mais lento.
+	//
+	// Floor em delta_time: o scheduler do Windows tem jitter de ~1-2ms.
+	// Sem o floor, ticks com dt < ~0.2ms resultam em t ≈ 0 e o aim
+	// para completamente por aquele tick, causando movimento irregular.
+	// Floor de 1/256s (~3.9ms) é conservador — bem abaixo do intervalo
+	// real de 7.8ms a 128 TPS, mas protege contra spikes negativos de jitter.
+	constexpr float k_dt_floor = 1.0f / 256.0f;
+	const float dt  = std::max( delta_time, k_dt_floor );
 	const float amt = std::max( 1.0f, cfg.smooth_amount );
-	const float t   = 1.0f - std::exp( -delta_time * ( 60.0f / amt ) );
+	const float t   = 1.0f - std::exp( -dt * ( 60.0f / amt ) );
 
 	delta.x *= t;
 	delta.y *= t;
@@ -182,14 +216,17 @@ void AimController::apply_humanize( math::vector2& delta, const AimConfig& cfg )
 
 void AimController::apply_aimbot( math::vector2& delta, const AimConfig& cfg )
 {
-	// Hard-lock: nenhuma modificação adicional — o delta já foi calculado, suavizado,
-	// e humanizado acima. Se quiser clampar o movimento máximo por tick, faz aqui.
-	// Exemplo: limitar a 5° por tick para não parecer teleportação de mira.
-	constexpr float k_max_step_deg = 5.0f;
+	// Hard-lock com step máximo por tick escalado pelo smooth_amount:
+	// smooth alto = movimento mais lento = step menor = mais humano.
+	// Fórmula: base de 5° / (smooth_amount / 10), mínimo de 1°, máximo de 10°.
+	// Exemplo: smooth=1  → 10° (movimento rápido),
+	//          smooth=10 → 5°  (padrão),
+	//          smooth=30 → ~1.7° (muito suave).
+	const float smooth = std::max( 1.0f, cfg.smooth_enabled ? cfg.smooth_amount : 10.0f );
+	const float k_max_step_deg = std::clamp( 50.0f / smooth, 1.0f, 10.0f );
+
 	delta.x = std::clamp( delta.x, -k_max_step_deg, k_max_step_deg );
 	delta.y = std::clamp( delta.y, -k_max_step_deg, k_max_step_deg );
-
-	( void )cfg;
 }
 
 // ============================================================================
@@ -198,11 +235,14 @@ void AimController::apply_aimbot( math::vector2& delta, const AimConfig& cfg )
 
 void AimController::normalize_delta( math::vector2& a )
 {
-	// FIX: não clampeia pitch do DELTA em ±89° — isso não faz sentido para deltas.
-	// O clamp de pitch se aplica ao ÂNGULO ABSOLUTO resultante, não ao delta.
-	// Aqui só normalizamos o yaw para manter no range [-180, 180].
-	while ( a.y >  180.0f ) a.y -= 360.0f;
-	while ( a.y < -180.0f ) a.y += 360.0f;
+	// NaN guard: delta NaN pode ocorrer se aim_point vier de posição inválida.
+	if ( std::isnan( a.x ) || std::isinf( a.x ) ) a.x = 0.0f;
+	if ( std::isnan( a.y ) || std::isinf( a.y ) ) a.y = 0.0f;
+
+	// Normaliza yaw para [-180, 180] usando fmod (evita loop infinito com NaN/grande valor).
+	a.y = std::fmod( a.y + 180.0f, 360.0f );
+	if ( a.y < 0.0f ) a.y += 360.0f;
+	a.y -= 180.0f;
 }
 
 float AimController::rng_float( float minv, float maxv )

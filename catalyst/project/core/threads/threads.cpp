@@ -20,10 +20,25 @@ namespace threads {
 	{
 		std::string last_map{};
 
-		std::this_thread::sleep_for( std::chrono::milliseconds( 500 ) );
+		constexpr auto target_hz = 200;
+		constexpr auto tick_interval = std::chrono::nanoseconds( 1'000'000'000 / target_hz );
+		auto next_tick = std::chrono::steady_clock::now( );
 
 		while ( !stop.stop_requested( ) )
 		{
+			// ── Watchdog: atualiza timestamp deste thread ─────────────────────
+			game_last_tick.store( clock::now( ), std::memory_order_relaxed );
+
+			// ── Watchdog: verifica se o thread de combat travou ──────────────
+			// Threshold: 3 s sem tick = travado (intervalo normal = ~7.8 ms a 128 TPS).
+			// Só verifica se o combat já iniciou (timestamp != epoch).
+			if ( is_hung( combat_last_tick, 3000 ) )
+			{
+				g::console.print( "[watchdog] combat thread hung — requesting stop." );
+				::PostQuitMessage( 0 );
+				return;
+			}
+
 			// Graceful shutdown: se o CS2 fechou, encerra o overlay inteiro.
 			if ( !is_target_alive( ) )
 			{
@@ -52,7 +67,13 @@ namespace threads {
 						systems::g_bvh.clear( );
 						g::console.print( "parsing bvh for {}...", current_map );
 						systems::g_bvh.parse( );
-						g::console.success( "bvh parsed." );
+						if ( systems::g_bvh.valid( ) )
+							g::console.success( "bvh parsed ({} triangles).", systems::g_bvh.count( ) );
+						else
+						{
+							g::console.print( "bvh parse failed — wallbang/autowall disabled for this map." );
+							systems::g_bvh.clear( ); // garante estado limpo
+						}
 					}
 				}
 			}
@@ -77,6 +98,9 @@ namespace threads {
 
 		while ( !stop.stop_requested( ) )
 		{
+			// ── Watchdog: atualiza timestamp deste thread ─────────────────────
+			combat_last_tick.store( clock::now( ), std::memory_order_relaxed );
+
 			if ( systems::g_local.valid( ) && systems::g_bvh.valid( ) )
 			{
 				features::combat::g_shared.tick( );
@@ -84,6 +108,7 @@ namespace threads {
 				features::combat::g_rcs.tick( );
 				features::misc::g_wallbang.tick( );
 				features::misc::g_bomb_timer.tick( );
+				features::misc::g_radar.tick( );
 			}
 
 			next_tick += tick_interval;
@@ -91,16 +116,17 @@ namespace threads {
 			const auto now = std::chrono::steady_clock::now( );
 			if ( next_tick < now )
 			{
+				// Ficamos para trás (tick demorou mais que o intervalo): reseta o alvo
+				// para não entrar em modo catch-up que causa rajada de ticks consecutivos.
 				next_tick = now;
 				continue;
 			}
 
-			std::this_thread::sleep_until( next_tick - std::chrono::milliseconds( 1 ) );
-
-			while ( std::chrono::steady_clock::now( ) < next_tick )
-			{
-				_mm_pause( );
-			}
+			// Dorme até o próximo tick — o scheduler do Windows tem jitter de ~1–2 ms,
+			// o que é aceitável a 128 TPS (intervalo de ~7.8 ms).
+			// O busy-wait anterior com _mm_pause consumia 100% de um core no período
+			// de espera sem ganho real de latência perceptível no CS2.
+			std::this_thread::sleep_until( next_tick );
 		}
 	}
 

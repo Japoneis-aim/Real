@@ -39,9 +39,14 @@ namespace systems {
 
 			std::uint32_t min_tri = UINT32_MAX, max_tri = 0;
 			std::vector<std::pair<std::uint32_t, std::uint32_t>> ranges;
-			std::vector<std::uint32_t> stack{ 0u };
 
-			stack.reserve( 256 );
+			// thread_local static: o vetor é alocado uma única vez por thread
+			// e reutilizado em todas as chamadas subsequentes.
+			// Elimina o reserve(256) + possível realloc a cada mesh extraída
+			// durante o parse do BVH (centenas de meshes por mapa).
+			thread_local static std::vector<std::uint32_t> stack;
+			stack.clear( );
+			stack.push_back( 0u );
 
 			while ( !stack.empty( ) )
 			{
@@ -584,6 +589,20 @@ namespace systems {
 // Helper: Moller-Trumbore triangle intersection (extracted to remove duplication)
 namespace
 {
+	// Computes the unit normal of triangle (v0,v1,v2).
+	// Returns {0,0,0} for degenerate triangles (length < 1e-8).
+	static inline math::vector3 triangle_normal( const math::vector3& v0, const math::vector3& v1, const math::vector3& v2 )
+	{
+		const auto nx = ( v1.y - v0.y ) * ( v2.z - v0.z ) - ( v1.z - v0.z ) * ( v2.y - v0.y );
+		const auto ny = ( v1.z - v0.z ) * ( v2.x - v0.x ) - ( v1.x - v0.x ) * ( v2.z - v0.z );
+		const auto nz = ( v1.x - v0.x ) * ( v2.y - v0.y ) - ( v1.y - v0.y ) * ( v2.x - v0.x );
+		const auto nl = std::sqrt( nx * nx + ny * ny + nz * nz );
+		if ( nl < 1e-8f )
+			return {};
+		const auto inv_nl = 1.0f / nl;
+		return { nx * inv_nl, ny * inv_nl, nz * inv_nl };
+	}
+
 	static inline bool intersect_triangle_mt( const float dir[3], const float origin[3], const math::vector3& v0, const math::vector3& v1, const math::vector3& v2, float& out_t, float u_eps = 0.0f, float v_eps = 0.0f, float sum_eps = 0.0f )
 	{
 		const auto e1x = v1.x - v0.x, e1y = v1.y - v0.y, e1z = v1.z - v0.z;
@@ -692,17 +711,7 @@ namespace
 						result.triangle_index = ti;
 						result.surface = tri.surface;
 						result.end_pos = { origin[ 0 ] + dir[ 0 ] * t, origin[ 1 ] + dir[ 1 ] * t, origin[ 2 ] + dir[ 2 ] * t };
-
-						const auto nx = ( tri.v1.y - tri.v0.y ) * ( tri.v2.z - tri.v0.z ) - ( tri.v1.z - tri.v0.z ) * ( tri.v2.y - tri.v0.y );
-						const auto ny = ( tri.v1.z - tri.v0.z ) * ( tri.v2.x - tri.v0.x ) - ( tri.v1.x - tri.v0.x ) * ( tri.v2.z - tri.v0.z );
-						const auto nz = ( tri.v1.x - tri.v0.x ) * ( tri.v2.y - tri.v0.y ) - ( tri.v1.y - tri.v0.y ) * ( tri.v2.x - tri.v0.x );
-						const auto nl = std::sqrt( nx * nx + ny * ny + nz * nz );
-
-						if ( nl > 1e-8f )
-						{
-							const auto inv_nl = 1.0f / nl;
-							result.normal = { nx * inv_nl, ny * inv_nl, nz * inv_nl };
-						}
+						result.normal = triangle_normal( tri.v0, tri.v1, tri.v2 );
 					}
 				}
 			}
@@ -905,26 +914,14 @@ namespace
 					float t = 0.0f;
 					if ( intersect_triangle_mt( dir, origin, tri.v0, tri.v1, tri.v2, t ) && t < max_dist )
 					{
-						auto nx = ( tri.v1.y - tri.v0.y ) * ( tri.v2.z - tri.v0.z ) - ( tri.v1.z - tri.v0.z ) * ( tri.v2.y - tri.v0.y );
-						auto ny = ( tri.v1.z - tri.v0.z ) * ( tri.v2.x - tri.v0.x ) - ( tri.v1.x - tri.v0.x ) * ( tri.v2.z - tri.v0.z );
-						auto nz = ( tri.v1.x - tri.v0.x ) * ( tri.v2.y - tri.v0.y ) - ( tri.v1.y - tri.v0.y ) * ( tri.v2.x - tri.v0.x );
-						const auto nl = std::sqrt( nx * nx + ny * ny + nz * nz );
-
-						if ( nl > 1e-8f )
-						{
-							const auto inv_nl = 1.0f / nl;
-							nx *= inv_nl;
-							ny *= inv_nl;
-							nz *= inv_nl;
-						}
-
-						const auto ndot = nx * dir[ 0 ] + ny * dir[ 1 ] + nz * dir[ 2 ];
+						const auto n = triangle_normal( tri.v0, tri.v1, tri.v2 );
+						const auto ndot = n.x * dir[ 0 ] + n.y * dir[ 1 ] + n.z * dir[ 2 ];
 
 						hit_entry hit{};
 						hit.distance = t;
 						hit.fraction = t / max_dist;
 						hit.position = { origin[ 0 ] + dir[ 0 ] * t, origin[ 1 ] + dir[ 1 ] * t, origin[ 2 ] + dir[ 2 ] * t };
-						hit.normal = { nx, ny, nz };
+						hit.normal = n;
 						hit.surface = tri.surface;
 						hit.triangle_index = ti;
 						hit.is_enter = ( ndot < 0.0f );

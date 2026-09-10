@@ -96,6 +96,9 @@ namespace systems {
 		// Velocidade vertical do pawn local — usada para gate de pulo/queda no triggerbot.
 		[[nodiscard]] float velocity_z( ) const { return m_velocity_z.load( ); }
 
+		// Velocidade horizontal (XY) do pawn local — usada pelo Speed ESP.
+		[[nodiscard]] float velocity_xy( ) const { return m_velocity_xy.load( ); }
+
 		// Gate global: cursor visível = jogo perdeu foco (menu, scoreboard, console, dead).
 		// Triggerbot, RCS e aimbot não devem injetar input nesse estado.
 		[[nodiscard]] static bool is_cursor_visible( )
@@ -120,6 +123,7 @@ namespace systems {
 		std::atomic<std::uintptr_t> m_weapon_vdata{};
 		std::atomic<std::uint32_t> m_weapon_type{};
 		std::atomic<float> m_velocity_z{ 0.f };  // componente Z da velocidade do pawn local
+		std::atomic<float> m_velocity_xy{ 0.f };  // velocidade horizontal (XY) do pawn local
 	};
 
 	class view
@@ -154,7 +158,7 @@ namespace systems {
 				math::quaternion rotation{};
 			};
 
-			std::array<bone, static_cast< std::size_t >( 27 )> bones{};
+			std::array<bone, 128> bones{};
 
 			[[nodiscard]] bool is_valid( ) const;
 			[[nodiscard]] math::vector3 get_position( std::uint32_t id ) const;
@@ -262,7 +266,19 @@ namespace systems {
 			bool is_defusing{};
 			bool is_flashed{};
 			bool is_visible{};
+			bool is_bot{};     // m_bIsControlledByHuman == false → bot
 			hitboxes::set hitboxes{};
+
+			// Backtrack: histórico circular de posições de bones com timestamp.
+			// Preenchido a cada frame no collector e persistido via bone_hitbox_cache.
+			struct backtrack_record
+			{
+				systems::bones::data bones{};
+				std::chrono::steady_clock::time_point timestamp{};
+			};
+			static constexpr int k_backtrack_ticks = 16;
+			std::array<backtrack_record, k_backtrack_ticks> backtrack_records{};
+			int backtrack_count{};
 		};
 
 		struct item
@@ -334,15 +350,40 @@ namespace systems {
 		std::vector<projectile> m_projectiles{};
 		mutable std::shared_mutex m_mutex{};
 
-		// Cache de hitboxes e bones por controller ptr — dirty flag por bone_cache ptr.
-		// Evita re-leitura de memória cara a cada frame quando o player não moveu.
+		// Cache de hitboxes e visibilidade por controller ptr.
+		//
+		// Hitboxes: dirty flag por bone_cache ptr e pawn ptr.
+		// Bones são relidas todo frame (1 syscall, ~2KB) para evitar stale data no respawn:
+		// o CS2 reutiliza o mesmo bone_cache ptr após respawn, então dirty-flag de bones
+		// nunca disparava e o esqueleto ficava na posição de morte/spawn anterior.
+		//
+		// Visibilidade: dirty flag por distância de origem > k_vis_origin_threshold.
+		// Os 3 raycasts BVH por jogador custam ~1.5–3µs cada; cachear por frame
+		// (reavaliando só quando o jogador se moveu > 5u ou a câmera mudou > 5u)
+		// elimina ~90% dos raycasts em rounds onde os jogadores estão relativamente estáticos.
 		struct bone_hitbox_cache
 		{
-			std::uintptr_t  last_bone_cache_ptr{};  // se mudou, invalida
-			bones::data     cached_bones{};
+			std::uintptr_t  last_bone_cache_ptr{};  // se mudou, invalida hitboxes
+			std::uintptr_t  last_pawn{};             // se mudou (respawn), invalida hitboxes
 			hitboxes::set   cached_hitboxes{};
+
+			// Cache de visibilidade — dirty flag por movement threshold
+			math::vector3   last_vis_player_origin{};  // origem do jogador no último raycast
+			math::vector3   last_vis_view_origin{};    // origem da câmera no último raycast
+			bool            cached_is_visible{};
+			bool            vis_valid{};               // false = nunca calculado (primeiro frame)
 		};
+
+		// Threshold de movimento (em unidades²) para invalidar o cache de visibilidade.
+		// 5u de movimento = 25u² — raycasts são idênticos abaixo disso.
+		static constexpr float k_vis_origin_threshold_sq = 5.0f * 5.0f;
 		std::unordered_map<std::uintptr_t, bone_hitbox_cache> m_bone_hitbox_cache{};
+
+		// Cache de nome de arma por weapon.ptr — evita read_string a cada frame.
+		// Invalidado automaticamente quando o mapa muda (BVH count muda).
+		// Membro da classe para ter lifetime controlado (sem static local).
+		std::unordered_map<std::uintptr_t, std::string> m_weapon_name_cache{};
+		std::size_t m_weapon_name_bvh_count{};
 	};
 
 	class bvh

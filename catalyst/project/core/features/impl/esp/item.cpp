@@ -6,48 +6,37 @@ namespace features::esp {
 	{
 		const auto& cfg = settings::g_esp.m_item;
 		if ( !cfg.enabled )
-		{
 			return;
-		}
 
 		const auto view_origin = systems::g_view.origin( );
 
-		for ( const auto& item : systems::g_collector.items( ) )
+		systems::g_collector.with_items( [&]( const std::vector<systems::collector::item>& items )
+		{
+		for ( const auto& item : items )
 		{
 			const auto distance = view_origin.distance( item.origin ) * 0.01905f;
 			if ( distance > cfg.max_distance )
-			{
 				continue;
-			}
 
 			if ( !this->passes_filter( item.subtype, cfg.m_filters ) )
-			{
 				continue;
-			}
 
 			const auto screen = systems::g_view.project( item.origin );
 			if ( !systems::g_view.projection_valid( screen ) )
-			{
 				continue;
-			}
 
 			auto y_offset{ 0.0f };
 
 			if ( cfg.m_icon.enabled )
-			{
 				this->add_icon( draw_list, screen, item, cfg.m_icon, y_offset );
-			}
 
 			if ( cfg.m_name.enabled )
-			{
 				this->add_name( draw_list, screen, item, cfg.m_name, y_offset );
-			}
 
 			if ( cfg.m_ammo.enabled && item.max_ammo > 0 )
-			{
 				this->add_ammo( draw_list, screen, item, cfg.m_ammo, y_offset );
-			}
 		}
+		} ); // with_items
 	}
 
 	void item::add_icon( zdraw::draw_list& draw_list, const math::vector2& screen, const systems::collector::item& item, const settings::esp::item::icon& cfg, float& y_offset )
@@ -199,69 +188,107 @@ namespace features::esp {
 	std::string item::get_icon( systems::collector::item_subtype subtype ) const
 	{
 		using st = systems::collector::item_subtype;
-
-		static const std::unordered_map<st, std::string> icons
+		switch ( subtype )
 		{
-			{ st::ak47,           "ak47" },         { st::m4a4,           "m4a1" },
-			{ st::m4a1s,          "m4a1_silencer" },{ st::aug,            "aug" },
-			{ st::famas,          "famas" },        { st::galil_ar,       "galilar" },
-			{ st::sg553,          "sg556" },        { st::awp,            "awp" },
-			{ st::ssg08,          "ssg08" },        { st::g3sg1,          "g3sg1" },
-			{ st::scar20,         "scar20" },       { st::mac10,          "mac10" },
-			{ st::mp5sd,          "mp5sd" },        { st::mp7,            "mp7" },
-			{ st::mp9,            "mp9" },          { st::pp_bizon,       "bizon" },
-			{ st::p90,            "p90" },          { st::ump45,          "ump45" },
-			{ st::nova,           "nova" },         { st::sawed_off,      "sawedoff" },
-			{ st::xm1014,         "xm1014" },       { st::mag7,           "mag7" },
-			{ st::m249,           "m249" },         { st::negev,          "negev" },
-			{ st::deagle,         "deagle" },       { st::dual_berettas,  "elite" },
-			{ st::five_seven,     "fiveseven" },    { st::glock,          "glock" },
-			{ st::p2000,          "hkp2000" },      { st::usps,           "usp_silencer" },
-			{ st::p250,           "p250" },         { st::cz75,           "cz75a" },
-			{ st::tec9,           "tec9" },         { st::r8_revolver,    "revolver" },
-			{ st::taser,          "taser" },        { st::c4,             "c4" },
-			{ st::he_grenade,     "hegrenade" },    { st::flashbang,      "flashbang" },
-			{ st::smoke_grenade,  "smokegrenade" }, { st::molotov,        "molotov" },
-			{ st::incendiary,     "incgrenade" },   { st::decoy,          "decoy" },
-			{ st::knife,          "knife" },        { st::healthshot,     "healthshot" },
-		};
-
-		const auto it = icons.find( subtype );
-		return it != icons.end( ) ? it->second : "";
+		case st::ak47:          return "ak47";
+		case st::m4a4:          return "m4a1";
+		case st::m4a1s:         return "m4a1_silencer";
+		case st::aug:           return "aug";
+		case st::famas:         return "famas";
+		case st::galil_ar:      return "galilar";
+		case st::sg553:         return "sg556";
+		case st::awp:           return "awp";
+		case st::ssg08:         return "ssg08";
+		case st::g3sg1:         return "g3sg1";
+		case st::scar20:        return "scar20";
+		case st::mac10:         return "mac10";
+		case st::mp5sd:         return "mp5sd";
+		case st::mp7:           return "mp7";
+		case st::mp9:           return "mp9";
+		case st::pp_bizon:      return "bizon";
+		case st::p90:           return "p90";
+		case st::ump45:         return "ump45";
+		case st::nova:          return "nova";
+		case st::sawed_off:     return "sawedoff";
+		case st::xm1014:        return "xm1014";
+		case st::mag7:          return "mag7";
+		case st::m249:          return "m249";
+		case st::negev:         return "negev";
+		case st::deagle:        return "deagle";
+		case st::dual_berettas: return "elite";
+		case st::five_seven:    return "fiveseven";
+		case st::glock:         return "glock";
+		case st::p2000:         return "hkp2000";
+		case st::usps:          return "usp_silencer";
+		case st::p250:          return "p250";
+		case st::cz75:          return "cz75a";
+		case st::tec9:          return "tec9";
+		case st::r8_revolver:   return "revolver";
+		case st::taser:         return "taser";
+		case st::c4:            return "c4";
+		case st::he_grenade:    return "hegrenade";
+		case st::flashbang:     return "flashbang";
+		case st::smoke_grenade: return "smokegrenade";
+		case st::molotov:       return "molotov";
+		case st::incendiary:    return "incgrenade";
+		case st::decoy:         return "decoy";
+		case st::knife:         return "knife";
+		case st::healthshot:    return "healthshot";
+		default:                return "";
+		}
 	}
 
 	std::string item::get_display_name( systems::collector::item_subtype subtype ) const
 	{
 		using st = systems::collector::item_subtype;
-
-		static const std::unordered_map<st, std::string> names
+		switch ( subtype )
 		{
-			{ st::ak47,           "ak47" },            { st::m4a4,           "m4a4" },
-			{ st::m4a1s,          "m4a1-s" },          { st::aug,            "aug" },
-			{ st::famas,          "famas" },           { st::galil_ar,       "galil" },
-			{ st::sg553,          "sg553" },           { st::awp,            "awp" },
-			{ st::ssg08,          "scout" },           { st::g3sg1,          "g3sg1" },
-			{ st::scar20,         "scar" },            { st::mac10,          "mac10" },
-			{ st::mp5sd,          "mp5" },             { st::mp7,            "mp7" },
-			{ st::mp9,            "mp9" },             { st::pp_bizon,       "bizon" },
-			{ st::p90,            "p90" },             { st::ump45,          "ump" },
-			{ st::nova,           "nova" },            { st::sawed_off,      "sawed" },
-			{ st::xm1014,         "xm1014" },          { st::mag7,           "mag7" },
-			{ st::m249,           "m249" },            { st::negev,          "negev" },
-			{ st::deagle,         "deagle" },          { st::dual_berettas,  "dualies" },
-			{ st::five_seven,     "five7" },           { st::glock,          "glock" },
-			{ st::p2000,          "p2000" },           { st::usps,           "usp-s" },
-			{ st::p250,           "p250" },            { st::cz75,           "cz75" },
-			{ st::tec9,           "tec9" },            { st::r8_revolver,    "r8" },
-			{ st::taser,          "taser" },           { st::c4,             "c4" },
-			{ st::he_grenade,     "he" },              { st::flashbang,      "flash" },
-			{ st::smoke_grenade,  "smoke" },           { st::molotov,        "molotov" },
-			{ st::incendiary,     "incendiary" },      { st::decoy,          "decoy" },
-			{ st::knife,          "knife" },           { st::healthshot,     "medkit" },
-		};
-
-		const auto it = names.find( subtype );
-		return it != names.end( ) ? it->second : "unknown";
+		case st::ak47:          return "ak47";
+		case st::m4a4:          return "m4a4";
+		case st::m4a1s:         return "m4a1-s";
+		case st::aug:           return "aug";
+		case st::famas:         return "famas";
+		case st::galil_ar:      return "galil";
+		case st::sg553:         return "sg553";
+		case st::awp:           return "awp";
+		case st::ssg08:         return "scout";
+		case st::g3sg1:         return "g3sg1";
+		case st::scar20:        return "scar";
+		case st::mac10:         return "mac10";
+		case st::mp5sd:         return "mp5";
+		case st::mp7:           return "mp7";
+		case st::mp9:           return "mp9";
+		case st::pp_bizon:      return "bizon";
+		case st::p90:           return "p90";
+		case st::ump45:         return "ump";
+		case st::nova:          return "nova";
+		case st::sawed_off:     return "sawed";
+		case st::xm1014:        return "xm1014";
+		case st::mag7:          return "mag7";
+		case st::m249:          return "m249";
+		case st::negev:         return "negev";
+		case st::deagle:        return "deagle";
+		case st::dual_berettas: return "dualies";
+		case st::five_seven:    return "five7";
+		case st::glock:         return "glock";
+		case st::p2000:         return "p2000";
+		case st::usps:          return "usp-s";
+		case st::p250:          return "p250";
+		case st::cz75:          return "cz75";
+		case st::tec9:          return "tec9";
+		case st::r8_revolver:   return "r8";
+		case st::taser:         return "taser";
+		case st::c4:            return "c4";
+		case st::he_grenade:    return "he";
+		case st::flashbang:     return "flash";
+		case st::smoke_grenade: return "smoke";
+		case st::molotov:       return "molotov";
+		case st::incendiary:    return "incendiary";
+		case st::decoy:         return "decoy";
+		case st::knife:         return "knife";
+		case st::healthshot:    return "medkit";
+		default:                return "unknown";
+		}
 	}
 
 } // namespace features::esp

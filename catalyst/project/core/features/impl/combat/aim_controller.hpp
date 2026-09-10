@@ -1,6 +1,5 @@
 #pragma once
 #include <utilities/math/math.hpp>
-#include <core/offsets/offsets.hpp>
 
 namespace features::combat {
 
@@ -58,6 +57,11 @@ private:
 	// Target-lock: reseta sub-pixel error quando o alvo muda, evitando
 	// que o resíduo do alvo anterior "puxe" a mira no primeiro frame do novo alvo.
 	const void*    m_last_target_ptr{ nullptr };
+
+	// Hysteresis da dead zone do aim assist.
+	// true = assist desligado (dentro da zona morta); false = assist ativo.
+	// Só sai do estado "dead" quando len > k_dead_zone_exit (ver apply_assist).
+	bool           m_assist_in_dead_zone{ false };
 };
 
 } // namespace features::combat

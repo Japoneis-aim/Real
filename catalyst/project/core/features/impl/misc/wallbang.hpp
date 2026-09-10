@@ -1,4 +1,6 @@
 #pragma once
+#include <atomic>
+#include <shared_mutex>
 #include <external/zdraw/zdraw.hpp>
 
 namespace features::misc {
@@ -20,7 +22,8 @@ public:
 	bool is_enabled() const { return m_enabled; }
 
 private:
-	bool m_enabled = true;
+	std::atomic<bool> m_enabled{ false };
+	mutable std::shared_mutex m_result_mutex{};
 	wallbang_result m_result{};
 	float m_anim_alpha = 0.f;
 	float m_damage_anim = 0.f;

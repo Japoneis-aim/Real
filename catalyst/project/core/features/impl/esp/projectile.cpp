@@ -6,13 +6,13 @@ namespace features::esp {
 	{
 		const auto& cfg = settings::g_esp.m_projectile;
 		if ( !cfg.enabled )
-		{
 			return;
-		}
 
-		const auto current_time = g::memory.read<float>( g::memory.read<std::uintptr_t>( g::offsets.global_vars ) + cs2::global_vars_cur_time );
+		const auto current_time = features::combat::g_shared.ctx( ).current_time;
 
-		for ( const auto& proj : systems::g_collector.projectiles( ) )
+		systems::g_collector.with_projectiles( [&]( const std::vector<systems::collector::projectile>& projectiles )
+		{
+		for ( const auto& proj : projectiles )
 		{
 			if ( proj.origin.length_sqr( ) < 1.0f )
 			{
@@ -152,6 +152,7 @@ namespace features::esp {
 				this->draw_timer( draw_list, screen, y_offset, remaining, frac, cfg );
 			}
 		}
+		} ); // with_projectiles
 	}
 
 	void projectile::draw_timer( zdraw::draw_list& draw_list, const math::vector2& screen, float& y_offset, float remaining, float frac, const settings::esp::projectile& cfg ) const

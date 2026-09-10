@@ -21,20 +21,27 @@ namespace settings {
 			config::f<bool, "visible only"> visible_only{ true };
 
 			config::f<bool, "draw fov"> draw_fov{ true };
-			config::f<zdraw::rgba, "fov color"> fov_color{ { 225, 225, 225, 125 } };
+			config::f<zdraw::rgba, "fov color"> fov_color{ { 255, 255, 255, 220 } };  // branco
 
 			config::f<bool, "predictive"> predictive{ true };
 
 			// ========== NOVAS FEATURES ==========
 			config::f<bool, "assist_mode"> assist_mode{ false };
 			config::f<float, "assist_strength"> assist_strength{ 0.3f };
+			// Tecla hold para ativar aim assist (independente da tecla do aimbot)
+			config::f<int, "assist_key"> assist_key{ VK_XBUTTON2 };
 			config::f<bool, "humanize"> humanize{ true };
 			config::f<float, "humanize_strength"> humanize_strength{ 50.0f };
+			// RCS
+			config::f<bool, "rcs_enabled"> rcs_enabled{ true };
 			config::f<float, "rcs_strength"> rcs_strength{ 70.0f };
 			// Tecla que alterna o RCS on/off independentemente do aimbot
 			config::f<int, "rcs_key"> rcs_key{ VK_F3 };
 
-			CONFIG_MEMBERS( enabled, key, toggle_key, fov, smoothing, autowall, min_damage, head_only, visible_only, draw_fov, fov_color, predictive, assist_mode, assist_strength, humanize, humanize_strength, rcs_strength, rcs_key )
+			// Multipoint: testa múltiplos pontos da hitbox e escolhe o de menor FOV
+			config::f<bool, "multipoint"> multipoint{ false };
+
+			CONFIG_MEMBERS( enabled, key, toggle_key, fov, smoothing, autowall, min_damage, head_only, visible_only, draw_fov, fov_color, predictive, assist_mode, assist_strength, assist_key, humanize, humanize_strength, rcs_enabled, rcs_strength, rcs_key, multipoint )
 		};
 
 		struct triggerbot
@@ -115,12 +122,12 @@ namespace settings {
 
 				config::f<bool, "enabled"> enabled{ true };
 				config::f<style_type, "style"> style{ style_type::cornered };
-				config::f<bool, "fill"> fill{ true };
+				config::f<bool, "fill"> fill{ false };   // fill desativado por padrão — cobria o boneco
 				config::f<bool, "outline"> outline{ true };
 				config::f<float, "corner length"> corner_length{ 10.0f };
 
-				config::f<zdraw::rgba, "visible color"> visible_color{ { 140, 150, 235, 255 } };
-				config::f<zdraw::rgba, "occluded color"> occluded_color{ { 110, 115, 170, 180 } };
+				config::f<zdraw::rgba, "visible color"> visible_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "occluded color"> occluded_color{ { 255, 255, 255, 160 } };
 
 				CONFIG_MEMBERS( enabled, style, fill, outline, corner_length, visible_color, occluded_color )
 			};
@@ -132,8 +139,9 @@ namespace settings {
 				config::f<bool, "enabled"> enabled{ true };
 				config::f<float, "thickness"> thickness{ 1.0f };
 
-				config::f<zdraw::rgba, "visible color"> visible_color{ { 170, 175, 220, 255 } };
-				config::f<zdraw::rgba, "occluded color"> occluded_color{ { 130, 135, 180, 180 } };
+				// Branco para visíveis, branco semi-transparente para ocluídos
+				config::f<zdraw::rgba, "visible color"> visible_color{ { 255, 255, 255, 220 } };
+				config::f<zdraw::rgba, "occluded color"> occluded_color{ { 255, 255, 255, 120 } };
 
 				CONFIG_MEMBERS( enabled, thickness, visible_color, occluded_color )
 			};
@@ -142,12 +150,12 @@ namespace settings {
 
 			struct hitboxes
 			{
-				config::f<bool, "enabled"> enabled{ true };
+				config::f<bool, "enabled"> enabled{ false };  // desativado por padrão — skeleton lines aparecem errado em bots
 
-				config::f<zdraw::rgba, "visible color"> visible_color{ { 150, 160, 240, 10 } };
-				config::f<zdraw::rgba, "occluded color"> occluded_color{ { 115, 120, 185, 10 } };
+				config::f<zdraw::rgba, "visible color"> visible_color{ { 255, 255, 255, 30 } };
+				config::f<zdraw::rgba, "occluded color"> occluded_color{ { 255, 255, 255, 15 } };
 
-				config::f<bool, "fill"> fill{ true };
+				config::f<bool, "fill"> fill{ false };
 				config::f<bool, "outline"> outline{ true };
 
 				CONFIG_MEMBERS( enabled, visible_color, occluded_color, fill, outline )
@@ -165,11 +173,11 @@ namespace settings {
 				config::f<bool, "gradient"> gradient{ true };
 				config::f<bool, "show value"> show_value{ true };
 
-				config::f<zdraw::rgba, "full color"> full_color{ { 140, 150, 235, 255 } };
-				config::f<zdraw::rgba, "low color"> low_color{ { 75, 80, 180, 255 } };
+				config::f<zdraw::rgba, "full color"> full_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "low color"> low_color{ { 200, 200, 200, 255 } };
 				config::f<zdraw::rgba, "background color"> background_color{ { 15, 16, 22, 150 } };
 				config::f<zdraw::rgba, "outline color"> outline_color{ { 15, 16, 22, 255 } };
-				config::f<zdraw::rgba, "text color"> text_color{ { 195, 200, 215, 255 } };
+				config::f<zdraw::rgba, "text color"> text_color{ { 255, 255, 255, 255 } };
 
 				CONFIG_MEMBERS( enabled, position, outline, gradient, show_value, full_color, low_color, background_color, outline_color, text_color )
 			};
@@ -186,11 +194,11 @@ namespace settings {
 				config::f<bool, "gradient"> gradient{ true };
 				config::f<bool, "show value"> show_value{ false };
 
-				config::f<zdraw::rgba, "full color"> full_color{ { 140, 150, 235, 255 } };
-				config::f<zdraw::rgba, "low color"> low_color{ { 75, 80, 180, 255 } };
+				config::f<zdraw::rgba, "full color"> full_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "low color"> low_color{ { 200, 200, 200, 255 } };
 				config::f<zdraw::rgba, "background color"> background_color{ { 15, 16, 22, 150 } };
 				config::f<zdraw::rgba, "outline color"> outline_color{ { 15, 16, 22, 255 } };
-				config::f<zdraw::rgba, "text color"> text_color{ { 195, 200, 215, 255 } };
+				config::f<zdraw::rgba, "text color"> text_color{ { 255, 255, 255, 255 } };
 
 				CONFIG_MEMBERS( enabled, position, outline, gradient, show_value, full_color, low_color, background_color, outline_color, text_color )
 			};
@@ -215,21 +223,24 @@ namespace settings {
 				config::f<bool, "enabled"> enabled{ true };
 				config::f<std::uint8_t, "flags"> flags{ static_cast< std::uint8_t >( flag::money | flag::armor | flag::kit | flag::scoped | flag::defusing | flag::flashed | flag::ping ) };
 
-				config::f<zdraw::rgba, "money color"> money_color{ { 120, 230, 160, 255 } };
-				config::f<zdraw::rgba, "armor color"> armor_color{ { 195, 200, 215, 255 } };
-				config::f<zdraw::rgba, "kit color"> kit_color{ { 140, 150, 235, 255 } };
-				config::f<zdraw::rgba, "scoped color"> scoped_color{ { 195, 200, 215, 255 } };
-				config::f<zdraw::rgba, "defusing color"> defusing_color{ { 140, 150, 235, 255 } };
-				config::f<zdraw::rgba, "flashed color"> flashed_color{ { 255, 210, 120, 255 } };
-				config::f<zdraw::rgba, "distance color"> distance_color{ { 90, 95, 130, 255 } };
-				config::f<zdraw::rgba, "look dir color"> look_dir_color{ { 255, 255, 80, 180 } };
+				config::f<zdraw::rgba, "money color"> money_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "armor color"> armor_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "kit color"> kit_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "scoped color"> scoped_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "defusing color"> defusing_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "flashed color"> flashed_color{ { 255, 255, 255, 255 } };
+				config::f<zdraw::rgba, "distance color"> distance_color{ { 255, 255, 255, 180 } };
+				config::f<zdraw::rgba, "look dir color"> look_dir_color{ { 255, 255, 255, 180 } };
 
 				[[nodiscard]] bool has( flag f ) const { return this->flags.value & f; }
 
 				// look_dir controlado por bool separado — não cabe no uint8 flags
 				config::f<bool, "look dir"> look_dir{ false };
+				// mostra label "bot" sobre bots — bool separado dos flags
+				config::f<bool, "show bot label"> show_bot_label{ true };
+				config::f<zdraw::rgba, "bot color"> bot_color{ { 255, 80, 80, 255 } };
 
-				CONFIG_MEMBERS( enabled, flags, money_color, armor_color, kit_color, scoped_color, defusing_color, flashed_color, distance_color, look_dir_color, look_dir )
+				CONFIG_MEMBERS( enabled, flags, money_color, armor_color, kit_color, scoped_color, defusing_color, flashed_color, distance_color, look_dir_color, look_dir, show_bot_label, bot_color )
 			};
 
 			config::g<info_flags, "info flags"> m_info_flags{};
@@ -237,7 +248,7 @@ namespace settings {
 			struct name
 			{
 				config::f<bool, "enabled"> enabled{ true };
-				config::f<zdraw::rgba, "color"> color{ { 195, 200, 215, 230 } };
+				config::f<zdraw::rgba, "color"> color{ { 255, 255, 255, 230 } };
 
 				CONFIG_MEMBERS( enabled, color )
 			};
@@ -251,8 +262,8 @@ namespace settings {
 				config::f<bool, "enabled"> enabled{ true };
 				config::f<display_type, "display"> display{ display_type::icon };
 
-				config::f<zdraw::rgba, "text color"> text_color{ { 195, 200, 215, 210 } };
-				config::f<zdraw::rgba, "icon color"> icon_color{ { 195, 200, 215, 230 } };
+				config::f<zdraw::rgba, "text color"> text_color{ { 255, 255, 255, 210 } };
+				config::f<zdraw::rgba, "icon color"> icon_color{ { 255, 255, 255, 230 } };
 
 				CONFIG_MEMBERS( enabled, display, text_color, icon_color )
 			};
@@ -271,7 +282,7 @@ namespace settings {
 			struct icon
 			{
 				config::f<bool, "enabled"> enabled{ true };
-				config::f<zdraw::rgba, "color"> color{ { 195, 200, 215, 200 } };
+				config::f<zdraw::rgba, "color"> color{ { 255, 255, 255, 200 } };
 
 				CONFIG_MEMBERS( enabled, color )
 			};
@@ -281,7 +292,7 @@ namespace settings {
 			struct name
 			{
 				config::f<bool, "enabled"> enabled{ false };
-				config::f<zdraw::rgba, "color"> color{ { 195, 200, 215, 180 } };
+				config::f<zdraw::rgba, "color"> color{ { 255, 255, 255, 180 } };
 
 				CONFIG_MEMBERS( enabled, color )
 			};
@@ -291,8 +302,8 @@ namespace settings {
 			struct ammo
 			{
 				config::f<bool, "enabled"> enabled{ true };
-				config::f<zdraw::rgba, "color"> color{ { 140, 150, 235, 200 } };
-				config::f<zdraw::rgba, "empty color"> empty_color{ { 180, 80, 80, 200 } };
+				config::f<zdraw::rgba, "color"> color{ { 255, 255, 255, 200 } };
+				config::f<zdraw::rgba, "empty color"> empty_color{ { 200, 200, 200, 200 } };
 
 				CONFIG_MEMBERS( enabled, color, empty_color )
 			};
@@ -329,14 +340,14 @@ namespace settings {
 			config::f<bool, "show timer bar"> show_timer_bar{ true };
 			config::f<bool, "show inferno bounds"> show_inferno_bounds{ true };
 
-			config::f<zdraw::rgba, "default color"> default_color{ { 195, 200, 215, 200 } };
-			config::f<zdraw::rgba, "color he"> color_he{ { 220, 150, 150, 220 } };
-			config::f<zdraw::rgba, "color flash"> color_flash{ { 230, 220, 150, 220 } };
-			config::f<zdraw::rgba, "color smoke"> color_smoke{ { 160, 200, 180, 220 } };
-			config::f<zdraw::rgba, "color molotov"> color_molotov{ { 220, 170, 130, 220 } };
-			config::f<zdraw::rgba, "color decoy"> color_decoy{ { 170, 175, 200, 200 } };
+			config::f<zdraw::rgba, "default color"> default_color{ { 255, 255, 255, 200 } };
+			config::f<zdraw::rgba, "color he"> color_he{ { 255, 255, 255, 220 } };
+			config::f<zdraw::rgba, "color flash"> color_flash{ { 255, 255, 255, 220 } };
+			config::f<zdraw::rgba, "color smoke"> color_smoke{ { 255, 255, 255, 220 } };
+			config::f<zdraw::rgba, "color molotov"> color_molotov{ { 255, 255, 255, 220 } };
+			config::f<zdraw::rgba, "color decoy"> color_decoy{ { 255, 255, 255, 200 } };
 
-			config::f<zdraw::rgba, "timer high color"> timer_high_color{ { 140, 150, 235, 255 } };
+			config::f<zdraw::rgba, "timer high color"> timer_high_color{ { 255, 255, 255, 255 } };
 			config::f<zdraw::rgba, "timer low color"> timer_low_color{ { 220, 100, 100, 255 } };
 			config::f<zdraw::rgba, "bar background"> bar_background{ { 15, 16, 22, 150 } };
 
@@ -354,7 +365,7 @@ namespace settings {
 		{
 			config::f<bool, "enabled"> enabled{ true };
 			config::f<bool, "local only"> local_only{ true };
-			config::f<zdraw::rgba, "color"> color{ { 170, 175, 220, 200 } };
+			config::f<zdraw::rgba, "color"> color{ { 255, 255, 255, 200 } };
 
 			CONFIG_MEMBERS( enabled, local_only, color )
 		};
@@ -368,14 +379,20 @@ namespace settings {
 		struct wallbang
 		{
 			config::f<bool, "enabled"> enabled{ true };
-			CONFIG_MEMBERS(enabled)
+			// Verde quando pode penetrar/acertar, vermelho quando não
+			config::f<zdraw::rgba, "color_yes"> color_yes{ { 50, 255, 50, 200 } };
+			config::f<zdraw::rgba, "color_no">  color_no { { 255, 50, 50, 200 } };
+			CONFIG_MEMBERS(enabled, color_yes, color_no)
 		};
 		config::g<wallbang, "wallbang"> m_wallbang{};
 
 		struct bombtimer
 		{
 			config::f<bool, "enabled"> enabled{ true };
-			CONFIG_MEMBERS(enabled)
+			// Posição do painel na tela em pixels
+			config::f<float, "pos_x"> pos_x{ 12.f };
+			config::f<float, "pos_y_frac"> pos_y_frac{ 0.35f }; // fração da altura da tela
+			CONFIG_MEMBERS(enabled, pos_x, pos_y_frac)
 		};
 		config::g<bombtimer, "bombtimer"> m_bombtimer{};
 
@@ -390,18 +407,49 @@ namespace settings {
 		{
 			config::f<bool, "enabled"> enabled{ true };
 			config::f<float, "lifetime"> lifetime{ 4.0f };
-			CONFIG_MEMBERS(enabled, lifetime)
+			config::f<zdraw::rgba, "color"> color{ { 255, 220, 0, 220 } }; // amarelo padrão
+			CONFIG_MEMBERS(enabled, lifetime, color)
 		};
 		config::g<impacts_cfg, "impacts"> m_impacts{};
 
 		struct no_flash
 		{
 			config::f<bool, "enabled"> enabled{ false };
-			CONFIG_MEMBERS(enabled)
+			// opacity: 0.0 = flash completamente removida, 1.0 = flash original intacta.
+			// Valores intermediários simulam flash parcial (menos suspeito que remoção total).
+			config::f<float, "opacity"> opacity{ 0.0f };
+			CONFIG_MEMBERS(enabled, opacity)
 		};
 		config::g<no_flash, "no_flash"> m_no_flash{};
 
-		CONFIG_MEMBERS( m_grenades, limit_fps, fps_limit, m_wallbang, m_bombtimer, m_stream_mode, m_impacts, m_no_flash )
+		struct speed_esp_cfg
+		{
+			config::f<bool, "enabled"> enabled{ true };
+			CONFIG_MEMBERS(enabled)
+		};
+		config::g<speed_esp_cfg, "speed_esp"> m_speed_esp{};
+
+		struct radar_cfg
+		{
+			config::f<bool, "enabled"> enabled{ false };
+			// Escala do mapa no radar: 1.0 = padrão, >1 = mais zoom, <1 = mais afastado.
+			config::f<float, "scale"> scale{ 1.0f };
+			// Zoom do radar em metros de raio visível (menor = mais fechado/detalhado).
+			config::f<float, "zoom"> zoom{ 500.0f };
+			// Posição na tela em pixels (canto superior-esquerdo do painel).
+			config::f<float, "pos_x"> pos_x{ 20.0f };
+			config::f<float, "pos_y"> pos_y{ 20.0f };
+			// Tamanho do painel em pixels.
+			config::f<float, "size"> size{ 200.0f };
+			// Cor dos inimigos no radar.
+			config::f<zdraw::rgba, "enemy_color"> enemy_color{ { 220, 60, 60, 230 } };
+			// Mostrar nome do jogador no radar.
+			config::f<bool, "show_names"> show_names{ false };
+			CONFIG_MEMBERS(enabled, scale, zoom, pos_x, pos_y, size, enemy_color, show_names)
+		};
+		config::g<radar_cfg, "radar"> m_radar{};
+
+		CONFIG_MEMBERS( m_grenades, limit_fps, fps_limit, m_wallbang, m_bombtimer, m_stream_mode, m_impacts, m_no_flash, m_speed_esp, m_radar )
 	};
 
 	inline combat g_combat{};

@@ -11,6 +11,7 @@
 // Novas features
 #include "impl/misc/wallbang.hpp"
 #include "impl/misc/bombtimer.hpp"
+#include "impl/misc/radar.hpp"
 #include "impl/combat/aim_controller.hpp"
 #include "impl/combat/rcs.hpp"
 #include "../render/stream_mode.hpp"
@@ -62,7 +63,7 @@ namespace features {
 			) const;
 
 			[[nodiscard]] bool is_valid_target(const systems::collector::player& player) const;
-			[[nodiscard]] float calculate_target_score(float fov, const math::vector3& eye_pos, const math::vector3& aim_point) const;
+			[[nodiscard]] float calculate_target_score(float fov, const math::vector3& eye_pos, const math::vector3& aim_point, bool is_visible) const;
 			[[nodiscard]] target build_target(
 				const systems::collector::player& player,
 				const systems::bones::data& bones,
@@ -144,11 +145,9 @@ namespace features {
 			// Aim pipeline state
 			math::vector2 m_accum_recoil{};
 			math::vector2 m_prev_punch{};
-			float m_last_frame_time{};
-			std::uintptr_t m_aim_punch_offset{};        // m_aimPunchAngle (fallback, path antigo)
-			std::uintptr_t m_camera_services_offset{};  // m_pCameraServices (path atual CS2)
-			std::uintptr_t m_view_punch_offset{};       // m_vecCsViewPunchAngle em CameraServices
-			bool m_offsets_cached{};
+			std::chrono::steady_clock::time_point m_last_frame_steady{};
+			// Nota: offsets de punch angle centralizados em g_shared — legit acessa via
+			// g_shared.aim_punch_offset(), g_shared.camera_services_offset(), etc.
 			// Persistent AimController to keep RCS/humanize state between frames
 			AimController m_aim_controller{}; // objeto direto, sem ponteiro
 			float m_trigger_delay_end{};
@@ -156,6 +155,7 @@ namespace features {
 			bool m_trigger_held{};
 			float m_trigger_release_time{};
 			float m_zeus_fire_time{};
+			bool m_toggle_key_prev{};
 		};
 
 		class shared
@@ -179,6 +179,13 @@ namespace features {
 				float current_time{};
 				float cycle_time{};
 				float last_shot_time{};
+				// Convars de escala de dano — lidos no tick() e cacheados aqui para
+				// evitar 4 reads de memória por call de scale_damage (chamada em loops
+				// de hitchance: 32 amostras × N hitboxes por tick).
+				float damage_scale_ct_head{ 1.0f };
+				float damage_scale_t_head{ 1.0f };
+				float damage_scale_ct_body{ 1.0f };
+				float damage_scale_t_body{ 1.0f };
 				bool valid{};
 			};
 
@@ -193,6 +200,12 @@ namespace features {
 					float range{};
 					float armor_ratio{};
 					float headshot_multiplier{};
+					// Escalas de dano por time/hitgroup — cacheadas do context no prepare()
+					// para evitar leituras de convar dentro dos loops de penetração.
+					float damage_scale_ct_head{ 1.0f };
+					float damage_scale_t_head{ 1.0f };
+					float damage_scale_ct_body{ 1.0f };
+					float damage_scale_t_body{ 1.0f };
 				};
 
 				struct result
@@ -203,6 +216,12 @@ namespace features {
 				};
 
 				void prepare(std::uintptr_t weapon_vdata, std::uintptr_t weapon);
+				// Versão que recebe as escalas de dano já lidas do context —
+				// evita 4 reads de convar extras por tick.
+				void prepare_with_scales(
+					std::uintptr_t weapon_vdata, std::uintptr_t weapon,
+					float ct_head, float t_head, float ct_body, float t_body
+				);
 				[[nodiscard]] bool run(
 					const math::vector3& start,
 					const math::vector3& end,
@@ -219,7 +238,14 @@ namespace features {
 			};
 
 			void tick();
-			[[nodiscard]] const context& ctx() const { return this->m_ctx; }
+			// ctx() retorna cópia por valor sob shared_lock — thread-safe.
+			// Usar `const auto& ctx = g_shared.ctx()` seria data race se store_context()
+			// sobrescrever m_ctx entre a aquisição do lock e o uso dos dados.
+			[[nodiscard]] context ctx() const
+			{
+				std::shared_lock lock( this->m_ctx_mutex );
+				return this->m_ctx;
+			}
 			[[nodiscard]] const penetration& pen() const { return this->m_pen; }
 
 			[[nodiscard]] float calculate_hitchance(
@@ -248,6 +274,16 @@ namespace features {
 				const math::vector3& eye_angles
 			) const;
 
+			// Versão batched — usa batches pré-lidos para eliminar reads duplicados.
+			// Aceita tanto batch_reader (dinâmico) quanto static_batch_reader<N>
+			// (este é implicitamente convertido via operator batch_reader).
+			[[nodiscard]] float get_inaccuracy_batched(
+				std::uintptr_t pawn,
+				const memory::batch_reader& weapon_batch,
+				const memory::batch_reader& vdata_batch,
+				const math::vector3& eye_angles
+			) const;
+
 			[[nodiscard]] bool ray_hits_capsule(
 				const math::vector3& ray_origin,
 				const math::vector3& ray_dir,
@@ -258,12 +294,56 @@ namespace features {
 
 			[[nodiscard]] bool is_weapon_max_accuracy() const;
 
+			// ── Offsets de punch angle centralizados ─────────────────────────────
+			// CS2: punch está em pawn → m_pCameraServices → m_vecCsViewPunchAngle.
+			// Cacheados aqui para evitar que legit, rcs e outros repetam a mesma
+			// lógica de "lazy-init + flag de carregado".
+			// Preenchidos automaticamente no primeiro uso (thread-safe via atomic).
+			[[nodiscard]] std::uintptr_t aim_punch_offset( ) const { ensure_punch_offsets( ); return m_aim_punch_offset; }
+			[[nodiscard]] std::uintptr_t camera_services_offset( ) const { ensure_punch_offsets( ); return m_camera_services_offset; }
+			[[nodiscard]] std::uintptr_t view_punch_offset( ) const { ensure_punch_offsets( ); return m_view_punch_offset; }
+
 		private:
 			void store_context(const context& ctx);
 
 			context m_ctx{};
 			penetration m_pen{};
 			mutable std::shared_mutex m_ctx_mutex{};
+
+			// Cache de hitchance — evita recalcular a cada tick quando posição/ângulos
+			// não mudaram significativamente. Invalidado por distância angular > threshold.
+			struct hitchance_cache_entry
+			{
+				float result{ -1.f };
+				math::vector3 last_eye_pos{};
+				math::vector3 last_aim_angle{};
+				std::chrono::steady_clock::time_point timestamp{};
+				const systems::collector::player* last_target{};
+			};
+			mutable hitchance_cache_entry m_hitchance_cache{};
+			// Cache válido por até k_hitchance_cache_ms milissegundos
+			static constexpr float k_hitchance_cache_ms = 16.f; // ~1 frame a 60Hz
+			// Threshold de mudança de ângulo para invalidar o cache (em graus²)
+			static constexpr float k_hitchance_angle_thresh_sq = 0.01f; // 0.1°
+
+			// ── Offsets de punch angle — preenchidos uma única vez ────────────
+			// std::atomic<bool> garante visibilidade entre threads sem mutex.
+			mutable std::atomic<bool>      m_punch_offsets_loaded{ false };
+			mutable std::uintptr_t         m_aim_punch_offset{};
+			mutable std::uintptr_t         m_camera_services_offset{};
+			mutable std::uintptr_t         m_view_punch_offset{};
+
+			void ensure_punch_offsets( ) const
+			{
+				if ( m_punch_offsets_loaded.load( std::memory_order_acquire ) )
+					return;
+				// Leitura única: safe mesmo com concorrência — o pior caso é
+				// dois threads inicializarem simultaneamente com os mesmos valores.
+				m_aim_punch_offset       = static_cast<std::uintptr_t>( SCHEMA( "C_CSPlayerPawn",         "m_aimPunchAngle"_hash ) );
+				m_camera_services_offset = static_cast<std::uintptr_t>( SCHEMA( "C_BasePlayerPawn",       "m_pCameraServices"_hash ) );
+				m_view_punch_offset      = static_cast<std::uintptr_t>( SCHEMA( "CPlayer_CameraServices", "m_vecCsViewPunchAngle"_hash ) );
+				m_punch_offsets_loaded.store( true, std::memory_order_release );
+			}
 		};
 
 		inline legit g_legit{};
@@ -429,6 +509,13 @@ namespace features {
 
 		inline grenades g_grenades{};
 		inline impacts g_impacts{};
+
+		class speed_esp
+		{
+		public:
+			void on_render( zdraw::draw_list& draw_list );
+		};
+		inline speed_esp g_speed_esp{};
 
 	} // namespace misc
 

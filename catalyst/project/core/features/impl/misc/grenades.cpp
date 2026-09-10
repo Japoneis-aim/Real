@@ -175,6 +175,11 @@ namespace features::misc {
 		this->m_weapon_vdata = ctx.weapon_vdata;
 		this->m_throw_velocity = std::clamp( g::memory.read<float>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_flThrowVelocity"_hash ) ), 1.0f, 10000.0f );
 
+		// Ao trocar de arma, invalida o cache de gravity/slope para que simulate()
+		// os releia uma vez (cobre troca de mapa ou mudança de convar mid-game).
+		this->m_sv_gravity         = 0.f;
+		this->m_molotov_max_slope_z = 0.f;
+
 		const auto name_ptr = g::memory.read<std::uintptr_t>( ctx.weapon_vdata + SCHEMA( "CCSWeaponBaseVData", "m_szName"_hash ) );
 		if ( !name_ptr )
 		{
@@ -408,10 +413,18 @@ namespace features::misc {
 
 	void grenades::simulate( const math::vector3& start, const math::vector3& velocity, trajectory& out )
 	{
-		this->m_sv_gravity = systems::g_convars.get<float>( CONVAR( "sv_gravity"_hash ) );
+		// sv_gravity e molotov_maxdetonateslope são convars que raramente mudam.
+		// Cachear no membro m_sv_gravity / m_molotov_max_slope_z (atualizados em
+		// update_weapon_properties) elimina 2 leituras de convar por chamada de simulate.
+		// Se os membros ainda não foram inicializados (zero), fazemos a leitura uma vez.
+		if ( this->m_sv_gravity == 0.f )
+			this->m_sv_gravity = systems::g_convars.get<float>( CONVAR( "sv_gravity"_hash ) );
 
-		const auto molotov_slope = systems::g_convars.get<float>( CONVAR( "weapon_molotov_maxdetonateslope"_hash ) );
-		this->m_molotov_max_slope_z = std::cosf( molotov_slope * std::numbers::pi_v<float> / 180.0f );
+		if ( this->m_molotov_max_slope_z == 0.f )
+		{
+			const auto molotov_slope = systems::g_convars.get<float>( CONVAR( "weapon_molotov_maxdetonateslope"_hash ) );
+			this->m_molotov_max_slope_z = std::cosf( molotov_slope * std::numbers::pi_v<float> / 180.0f );
+		}
 
 		out.points.clear( );
 		out.points.reserve( max_ticks / ticks_per_point );

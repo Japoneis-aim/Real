@@ -121,6 +121,8 @@ namespace features::misc {
 		// Renderiza todos os impactos armazenados (com fade por tempo).
 		static void render_impacts( zdraw::draw_list& draw_list, float current_time, float lifetime )
 		{
+			const auto& col = settings::g_misc.m_impacts.color.value;
+
 			for ( const auto& impact : s_impacts )
 			{
 				const auto screen = systems::g_view.project( impact.pos );
@@ -131,7 +133,7 @@ namespace features::misc {
 					? std::max( 0.0f, current_time - impact.game_time )
 					: 0.0f;
 				const float frac = std::clamp( 1.0f - age / lifetime, 0.0f, 1.0f );
-				const auto  a    = static_cast<std::uint8_t>( frac * 220.0f );
+				const auto  a    = static_cast<std::uint8_t>( frac * static_cast<float>( col.a ) );
 
 				if ( a < 4 )
 					continue;
@@ -139,7 +141,7 @@ namespace features::misc {
 				const float half = k_sz * 0.5f;
 				draw_list.add_rect_filled(
 					screen.x - half, screen.y - half, k_sz, k_sz,
-					{ 255, 220, 0, a }
+					{ col.r, col.g, col.b, a }
 				);
 				draw_list.add_rect(
 					screen.x - half - 1.f, screen.y - half - 1.f, k_sz + 2.f, k_sz + 2.f,
@@ -163,11 +165,9 @@ namespace features::misc {
 			return;
 		}
 
-		// Ler current_time uma única vez
-		const auto global_vars   = g::memory.read<std::uintptr_t>( g::offsets.global_vars );
-		const float current_time = global_vars
-			? g::memory.read<float>( global_vars + cs2::global_vars_cur_time )
-			: 0.0f;
+		// Ler current_time do contexto compartilhado — shared::tick() já fez esse
+		// read; reutilizar evita 2 syscalls extras (global_vars ptr + float) por frame.
+		const float current_time = features::combat::g_shared.ctx( ).current_time;
 
 		// Lifetime configurável: mínimo 0.5s para evitar fade instantâneo
 		const float k_lifetime = std::max( 0.5f, static_cast<float>( settings::g_misc.m_impacts.lifetime ) );

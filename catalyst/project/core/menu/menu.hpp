@@ -3,28 +3,19 @@
 class menu
 {
 public:
+	// Deve ser chamado uma única vez após o contexto ImGui ser criado.
+	// Aplica o ImGuiStyle global (fora do loop de render).
+	void on_init( );
 	void draw( );
 	[[nodiscard]] bool is_open( ) const noexcept { return this->m_open; }
 
 private:
-	enum class tab : int { combat = 0, esp, misc, count };
-
-	void draw_header( float width, float height );
-	void draw_content( float width, float height );
-	void draw_accent_lines( const zui::rect& bounds, float fade_ratio = 0.15f );
-
-	void draw_combat( );
+	void draw_aimbot( );
+	void draw_triggerbot( );
+	void draw_rcs( );
 	void draw_esp( );
 	void draw_misc( );
+	void draw_settings( );
 
-	tab m_tab{ tab::combat };
 	bool m_open{};
-
-	float m_x{ 200.0f };
-	float m_y{ 150.0f };
-	float m_w{ 650.0f };
-	float m_h{ 425.0f };
-
-	static constexpr const char* k_weapon_groups[ ]{ "pistol", "smg", "rifle", "shotgun", "sniper", "lmg" };
-	int m_weapon_group{};
 };

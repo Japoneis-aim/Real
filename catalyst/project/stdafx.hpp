@@ -27,6 +27,16 @@
 #include <external/fnv1a.hpp>
 #include <external/config.hpp>
 
+// imgui
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include <external/imgui/imgui.h>
+#include <external/imgui/imgui_internal.h>
+#include <external/imgui/imgui_impl_dx11.h>
+#include <external/imgui/imgui_impl_win32.h>
+#include <external/imgui/fonts.hpp>
+#include <external/imgui/FontAwesome.hpp>
+#include <external/imgui/FontAwesome6.hpp>
+
 // resources
 #include <resources/fonts/mochi.hpp>
 #include <resources/fonts/pixel7.hpp>
@@ -39,7 +49,8 @@
 #include <utilities/memory/memory.hpp>
 #include <utilities/math/math.hpp>
 #include <utilities/modules/modules.hpp>
-#include <utilities/offsets/offsets.hpp>
+#include <core/offsets/offsets.hpp>
+#include <utilities/offsets/offsets_map.hpp>
 #include <utilities/timing/timing.hpp>
 #include <utilities/cstypes.hpp>
 #include <utilities/random.hpp>

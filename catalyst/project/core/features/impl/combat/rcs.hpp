@@ -14,13 +14,11 @@ public:
 	[[nodiscard]] bool is_enabled( ) const { return m_toggle_on; }
 
 private:
-	void initialize_offsets( );
 	void move_mouse( int dx, int dy );
+	[[nodiscard]] float calculate_deg_per_count( ); // não-const: atualiza cache interno
 
-	bool           m_offsets_loaded{ false };
-	std::uintptr_t m_punch_offset{ 0 };           // m_aimPunchAngle (fallback, path antigo)
-	std::uintptr_t m_camera_services_offset{ 0 }; // m_pCameraServices (path atual CS2)
-	std::uintptr_t m_view_punch_offset{ 0 };      // m_vecCsViewPunchAngle dentro de CameraServices
+	// Nota: offsets de punch angle centralizados em g_shared — rcs acessa via
+	// g_shared.aim_punch_offset(), g_shared.camera_services_offset(), g_shared.view_punch_offset().
 
 	math::vector2  m_prev_punch{};
 	float          m_owed_x{ 0.f };
@@ -30,6 +28,14 @@ private:
 
 	// Toggle de sessão — alterado via rcs_key
 	bool           m_toggle_on{ true };
+	// Edge detection do toggle key: estado da tecla no tick anterior
+	bool           m_prev_key_state{ false };
+
+	// Cache de deg_per_count — evita leitura de memória e convar a cada tick.
+	// Invalidado a cada k_deg_cache_ticks ticks (fov_adjust raramente muda mid-game).
+	float          m_cached_deg_per_count{ 0.f };
+	int            m_deg_cache_tick{ 0 };
+	static constexpr int k_deg_cache_ticks = 16; // revalida a cada ~125ms a 128Hz
 };
 
 inline rcs g_rcs{};

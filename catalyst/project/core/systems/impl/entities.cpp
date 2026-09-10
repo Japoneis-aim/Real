@@ -134,6 +134,7 @@ namespace systems {
 	{
 		return 0;
 	}
+	class_name[ sizeof( class_name ) - 1 ] = '\0';
 
 	if ( !class_name[ 0 ] )
 	{

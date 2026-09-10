@@ -9,23 +9,15 @@ namespace features::combat {
 
 	void legit::on_render( zdraw::draw_list& draw_list )
 	{
-		const auto& ctx = g_shared.ctx( );
+		// Cópia local do contexto — shared_lock feito uma única vez.
+		// on_render e tick podem ser chamados em threads diferentes;
+		// fazer múltiplas chamadas a ctx() adquiriria o lock N vezes.
+		const auto ctx = g_shared.ctx( );
 		if ( !ctx.valid )
 			return;
 
 		const auto valid_weapon = cstypes::is_weapon_valid( ctx.weapon_type );
 		const auto& cfg = settings::g_combat.get( ctx.weapon_type );
-
-		// Cache de offsets do punch angle — feito uma única vez.
-		// CS2 atual: punch está em pawn → m_pCameraServices → m_vecCsViewPunchAngle.
-		// Guardamos os dois paths; o tick usará CameraServices se disponível, com
-		// fallback para m_aimPunchAngle direto no pawn (path antigo, pré-CS2 atual).
-		if ( !this->m_offsets_cached ) {
-			this->m_aim_punch_offset       = SCHEMA( "C_CSPlayerPawn",         "m_aimPunchAngle"_hash );
-			this->m_camera_services_offset = SCHEMA( "C_BasePlayerPawn",       "m_pCameraServices"_hash );
-			this->m_view_punch_offset      = SCHEMA( "CPlayer_CameraServices", "m_vecCsViewPunchAngle"_hash );
-			this->m_offsets_cached = true;
-		}
 
 		const auto eye_pos = systems::g_view.origin( );
 		const auto view_angles = systems::g_view.angles( );
@@ -35,8 +27,16 @@ namespace features::combat {
 			// draw_penetration_crosshair stub removido — funcionalidade provida pela wallbang_indicator
 		}
 
+		// FOV circle: só aparece quando há arma de fogo válida E draw_fov ativo.
+		// Sem arma válida (faca, etc.) não desenha FOV.
+		if ( !valid_weapon )
+		{
+			this->m_fov_alpha.snap( 0.0f );
+			return;
+		}
+
 		this->m_fov_alpha.set_target(
-			valid_weapon && cfg.aimbot.draw_fov && cfg.aimbot.enabled ? 1.0f : 0.0f
+			cfg.aimbot.draw_fov ? 1.0f : 0.0f
 		);
 		this->m_fov_alpha.update( );
 
@@ -55,7 +55,9 @@ namespace features::combat {
 		this->ensure_rng_seeded( );
 		this->update_trigger_state( );
 
-		const auto& ctx = g_shared.ctx( );
+		// Lê o contexto compartilhado UMA única vez por tick — shared_lock
+		// é barato mas não é gratuito; chamá-lo N vezes é desperdício.
+		const auto ctx = g_shared.ctx( );
 		if ( !ctx.valid )
 			return;
 
@@ -68,18 +70,39 @@ namespace features::combat {
 		if ( ctx.is_reloading || !ctx.weapon_ready )
 			return;
 
-		// Verifica se a tecla de ativação está pressionada
-		const bool aim_key_held    = ( ::GetAsyncKeyState( static_cast<int>( cfg.aimbot.key ) ) & 0x8000 ) != 0;
-		const bool trigger_key_held = ( ::GetAsyncKeyState( static_cast<int>( cfg.triggerbot.key ) ) & 0x8000 ) != 0;
+		// ── Snapshot único de estado de teclas ─────────────────────────────
+		// GetAsyncKeyState é uma chamada cara (transição ring3 via user32.dll).
+		// Centralizamos aqui para evitar ~4 chamadas independentes por tick.
+		// O bit 0x8000 indica que a tecla está pressionada no momento da leitura.
+		struct keys_snapshot
+		{
+			bool aim{};
+			bool assist{};
+			bool trigger{};
+			bool toggle{};
+		} keys;
 
-		// Toggle do aim-assist/aimbot por tecla dedicada
-		if ( ::GetAsyncKeyState( static_cast<int>( cfg.aimbot.toggle_key ) ) & 1 )
-			features::combat::g_aimbot_enabled = !features::combat::g_aimbot_enabled;
+		keys.aim     = ( ::GetAsyncKeyState( static_cast<int>( cfg.aimbot.key ) )     & 0x8000 ) != 0;
+		keys.assist  = ( ::GetAsyncKeyState( static_cast<int>( cfg.aimbot.assist_key ) ) & 0x8000 ) != 0;
+		keys.trigger = ( ::GetAsyncKeyState( static_cast<int>( cfg.triggerbot.key ) ) & 0x8000 ) != 0;
+
+		// Toggle do aim-assist/aimbot: edge detection explícito (bit 15 + estado anterior).
+		// Evita consumo do bit 0 por outra thread antes de chegarmos aqui.
+		{
+			const int toggle_key = static_cast<int>( cfg.aimbot.toggle_key );
+			if ( toggle_key )
+			{
+				keys.toggle = ( ::GetAsyncKeyState( toggle_key ) & 0x8000 ) != 0;
+				if ( keys.toggle && !this->m_toggle_key_prev )
+					features::combat::g_aimbot_enabled = !features::combat::g_aimbot_enabled;
+				this->m_toggle_key_prev = keys.toggle;
+			}
+		}
 
 		const bool aimbot_enabled_flag = static_cast<bool>( cfg.aimbot.enabled ) && features::combat::g_aimbot_enabled;
-		const bool aimbot_active  = aimbot_enabled_flag && aim_key_held;
-		const bool assist_active  = static_cast<bool>( cfg.aimbot.assist_mode ) && aim_key_held && features::combat::g_aimbot_enabled;
-		const bool trigger_active = static_cast<bool>( cfg.triggerbot.enabled ) && trigger_key_held;
+		const bool aimbot_active  = aimbot_enabled_flag && keys.aim;
+		const bool assist_active  = static_cast<bool>( cfg.aimbot.assist_mode ) && keys.assist && features::combat::g_aimbot_enabled;
+		const bool trigger_active = static_cast<bool>( cfg.triggerbot.enabled ) && keys.trigger;
 
 		if ( !aimbot_active && !assist_active && !trigger_active )
 			return;
@@ -90,11 +113,6 @@ namespace features::combat {
 		// Usa with_players para evitar cópia do vetor completo (~7.5 KB)
 		systems::g_collector.with_players( [&]( const std::vector<systems::collector::player>& players )
 		{
-
-		if ( ctx.weapon_type == cstypes::weapon_type::taser && !ctx.is_reloading && ctx.weapon_ready )
-		{
-			// zeusbot stub removido — não implementado
-		}
 
 		// ======================================================================
 		// AIM PIPELINE — Só roda se aimbot ou assist estiverem ativos E
@@ -126,11 +144,11 @@ namespace features::combat {
 				const auto deg_per_pixel = this->calculate_deg_per_pixel( );
 				if ( deg_per_pixel > 0.0f )
 				{
-					const auto now       = ctx.current_time;
-					const float delta_time = ( this->m_last_frame_time > 0.0f )
-						? ( now - this->m_last_frame_time )
-						: ( 1.0f / 128.0f ); // thread de combat roda a 128Hz
-					this->m_last_frame_time = now;
+					const auto steady_now = std::chrono::steady_clock::now( );
+				const float delta_time = ( this->m_last_frame_steady.time_since_epoch( ).count( ) > 0 )
+					? std::chrono::duration<float>( steady_now - this->m_last_frame_steady ).count( )
+					: ( 1.0f / 128.0f );
+				this->m_last_frame_steady = steady_now;
 
 					if ( !this->m_aim_controller.is_offsets_loaded( ) )
 						this->m_aim_controller.initialize_offsets( );
@@ -144,9 +162,8 @@ namespace features::combat {
 			}
 			else
 			{
-				// Sem alvo: resetar m_last_frame_time para evitar delta enorme
-				// quando um alvo aparecer depois de um intervalo longo
-				this->m_last_frame_time = 0.0f;
+				// Sem alvo: resetar para evitar delta enorme quando alvo aparecer depois
+				this->m_last_frame_steady = {};
 			}
 		}
 
@@ -175,7 +192,8 @@ namespace features::combat {
 			if ( !this->is_valid_target( player ) )
 				continue;
 
-			// Usa bones já cacheados pelo collector — evita segunda leitura de memória
+			// Usa cached_bones do collector (dirty-flag por bone_cache ptr + pawn ptr).
+			// Evita re-leitura de 4KB de memória externa por jogador por tick.
 			const auto& bones = player.cached_bones;
 			if ( !bones.is_valid( ) )
 				continue;
@@ -195,7 +213,7 @@ namespace features::combat {
 			if ( fov > static_cast<float>( cfg.aimbot.fov ) )
 				continue;
 
-			const auto score = this->calculate_target_score( fov, eye_pos, aim_point );
+			const auto score = this->calculate_target_score( fov, eye_pos, aim_point, penetrated ? false : player.is_visible );
 			if ( score < best_score )
 			{
 				best_score = score;
@@ -213,10 +231,35 @@ namespace features::combat {
 			&& player.hitboxes.count > 0;
 	}
 
-	float legit::calculate_target_score( float fov, const math::vector3& eye_pos, const math::vector3& aim_point ) const
+	float legit::calculate_target_score( float fov, const math::vector3& eye_pos, const math::vector3& aim_point, bool is_visible ) const
 	{
 		const auto dist = ( aim_point - eye_pos ).length( );
-		return fov + ( dist * 0.001f );
+
+		// Normaliza a distância pelo alcance máximo da arma para que o peso da
+		// distância seja comparável ao FOV (ambos em escala 0–1).
+		// Sem normalização, um jogador a 5000 unidades somaria 5.0° ao score,
+		// podendo superar um alvo 5× menor em FOV que está muito mais próximo.
+		//
+		// max_range típico: AK-47 ~8192, pistola ~4096, AWP ~8192.
+		// O peso final é: fov (graus) + dist_normalizada * fov * 0.3
+		// → distância contribui no máximo 30% do FOV como critério de seleção.
+		constexpr float k_fallback_range   = 8192.0f;
+		constexpr float k_dist_weight      = 0.3f;
+		// Penalidade para alvos não-visíveis que precisam de wallbang.
+		// Um multiplicador de 1.5× faz com que um alvo atrás de uma parede
+		// só seja preferido se estiver significativamente mais próximo da mira
+		// que um alvo visível, evitando desperdiçar wallbang desnecessário.
+		constexpr float k_occluded_penalty = 1.5f;
+
+		const auto max_range = g_shared.pen( ).get_weapon_data( ).range;
+		const auto effective_range = ( max_range > 0.0f ) ? max_range : k_fallback_range;
+
+		const auto dist_norm = std::clamp( dist / effective_range, 0.0f, 1.0f );
+		const auto base_score = fov + dist_norm * fov * k_dist_weight;
+
+		// Penaliza alvos não-visíveis — só serão preferidos se o FOV for
+		// substancialmente menor do que o melhor alvo visível.
+		return is_visible ? base_score : base_score * k_occluded_penalty;
 	}
 
 	legit::target legit::build_target(
@@ -261,25 +304,91 @@ namespace features::combat {
 			if ( !this->is_valid_hitbox( hb, cfg ) )
 				continue;
 
-			const auto pos = bones.get_position( hb.bone );
+			const auto& bone = bones.bones[ hb.bone ];
 			const auto hitgroup = systems::g_hitboxes.hitgroup_from_hitbox( hb.index );
 			const auto current_dmg = combat::g_shared.pen( ).get_max_damage(
 				hitgroup, player.armor, player.has_helmet, player.team
 			);
 
-			if ( cfg.aimbot.visible_only )
+			// Multipoint: testa múltiplos pontos da cápsula (centro + extremidades + laterais)
+			// para escolher o ponto de menor FOV que ainda é atingível.
+			// Só ativo se cfg.aimbot.multipoint e aimbot não está em visible_only simples.
+			if ( static_cast<bool>( cfg.aimbot.multipoint ) )
 			{
-				if ( !this->try_visible_hitbox( eye_pos, pos, player, bones, hb, cfg, current_dmg, best_dmg, best_pos, out_hitbox, out_penetrated ) )
-					continue;
+				// Constrói os pontos da cápsula: centro, cap_start e cap_end
+				const auto center_local = ( hb.mins + hb.maxs ) * 0.5f;
+				const auto half_extent  = ( hb.maxs - hb.mins ) * 0.5f;
+				const auto ax = std::abs( half_extent.x );
+				const auto ay = std::abs( half_extent.y );
+				const auto az = std::abs( half_extent.z );
+				const auto longest = std::max( { ax, ay, az } );
+				math::vector3 axis_local{};
+				if ( ax >= ay && ax >= az )      axis_local = { longest, 0.f, 0.f };
+				else if ( ay >= az )              axis_local = { 0.f, longest, 0.f };
+				else                              axis_local = { 0.f, 0.f, longest };
+
+				const auto center_world = bone.position + bone.rotation.rotate_vector( center_local );
+				const auto axis_world   = bone.rotation.rotate_vector( axis_local );
+				const auto cap_start    = center_world - axis_world;
+				const auto cap_end      = center_world + axis_world;
+
+				// Candidatos: centro, extremidades +75% e -75% para não pegar exatamente nas bordas
+				const math::vector3 candidates[] = {
+					center_world,
+					center_world + axis_world * 0.75f,
+					center_world - axis_world * 0.75f,
+				};
+
+				for ( const auto& candidate : candidates )
+				{
+					if ( cfg.aimbot.visible_only )
+					{
+						float dmg_tmp = best_dmg;
+						math::vector3 pos_tmp{};
+						int hb_tmp = out_hitbox;
+						bool pen_tmp = out_penetrated;
+
+						if ( this->try_visible_hitbox( eye_pos, candidate, player, bones, hb, cfg,
+								current_dmg, dmg_tmp, pos_tmp, hb_tmp, pen_tmp ) )
+						{
+							best_dmg    = dmg_tmp;
+							best_pos    = pos_tmp;
+							out_hitbox  = hb_tmp;
+							out_penetrated = pen_tmp;
+						}
+					}
+					else
+					{
+						if ( current_dmg > best_dmg )
+						{
+							best_dmg = current_dmg;
+							best_pos = candidate;
+							out_hitbox = hb.index;
+							out_penetrated = false;
+						}
+					}
+				}
 			}
 			else
 			{
-				if ( current_dmg > best_dmg )
+				// Modo padrão (single point = centro da hitbox)
+				const auto pos = bones.get_position( hb.bone );
+
+				if ( cfg.aimbot.visible_only )
 				{
-					best_dmg = current_dmg;
-					best_pos = pos;
-					out_hitbox = hb.index;
-					out_penetrated = false;
+					if ( !this->try_visible_hitbox( eye_pos, pos, player, bones, hb, cfg,
+							current_dmg, best_dmg, best_pos, out_hitbox, out_penetrated ) )
+						continue;
+				}
+				else
+				{
+					if ( current_dmg > best_dmg )
+					{
+						best_dmg = current_dmg;
+						best_pos = pos;
+						out_hitbox = hb.index;
+						out_penetrated = false;
+					}
 				}
 			}
 		}
@@ -399,7 +508,7 @@ namespace features::combat {
 			return;
 		}
 
-		const auto& ctx = g_shared.ctx( );
+		const auto ctx = g_shared.ctx( );
 		if ( !ctx.weapon_ready )
 		{
 			this->m_trigger_waiting = false;
@@ -494,7 +603,9 @@ namespace features::combat {
 		if ( !this->m_trigger_held )
 			return;
 
-		const auto& ctx = g_shared.ctx( );
+		// Cópia local — ctx() faz shared_lock; usar referência seria dangling se
+		// store_context() sobrescrever m_ctx entre a leitura e o uso.
+		const auto ctx = g_shared.ctx( );
 		if ( !ctx.valid || ctx.current_time >= this->m_trigger_release_time )
 		{
 			g::input.inject_mouse( 0, 0, input::left_up );
@@ -513,7 +624,7 @@ namespace features::combat {
 	// ============================================================================
 	// STUBS REMOVIDOS
 	// ============================================================================
-	// zeusbot() — não implementado, removido do tick()
+	// zeusbot() — não implementado; taser tratado pelo pipeline normal (sem disparo automático)
 	// draw_penetration_crosshair() — não implementado; funcionalidade provida por wallbang_indicator
 
 	// ============================================================================
@@ -579,7 +690,7 @@ namespace features::combat {
 			if ( player.invulnerable || player.hitboxes.count <= 0 )
 				continue;
 
-			// Usa bones já cacheados pelo collector — evita segunda leitura de memória
+			// Usa cached_bones do collector (dirty-flag: invalida em respawn/move).
 			const auto& bones = player.cached_bones;
 			if ( !bones.is_valid( ) )
 				continue;
@@ -600,8 +711,18 @@ namespace features::combat {
 				const auto center_local = ( hb.mins + hb.maxs ) * 0.5f;
 				const auto center_world = bone.position + math::helpers::rotate_by_quat( bone.rotation, center_local );
 
-				// Teste de colisão raio x cápsula: verifica se a mira aponta para esta hitbox
-				if ( !g_shared.ray_hits_capsule( eye_pos, forward, bone.position, center_world, hb.radius ) )
+				// Constrói cápsula corretamente (cap_a/cap_b) em vez de usar bone.position como extremo
+				const auto half_extent = ( hb.maxs - hb.mins ) * 0.5f;
+				const auto ax = std::abs( half_extent.x ), ay = std::abs( half_extent.y ), az = std::abs( half_extent.z );
+				const auto longest = std::max( { ax, ay, az } );
+				math::vector3 axis_local{};
+				if ( ax >= ay && ax >= az ) axis_local = { longest, 0.f, 0.f };
+				else if ( ay >= az )        axis_local = { 0.f, longest, 0.f };
+				else                        axis_local = { 0.f, 0.f, longest };
+				const auto axis_world = math::helpers::rotate_by_quat( bone.rotation, axis_local );
+				const auto cap_start  = center_world - axis_world;
+				const auto cap_end    = center_world + axis_world;
+				if ( !g_shared.ray_hits_capsule( eye_pos, forward, cap_start, cap_end, hb.radius ) )
 					continue;
 
 				// Verificar obstrução por BVH (geometria do mapa)
